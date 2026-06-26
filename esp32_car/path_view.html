@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 Car — Quỹ đạo</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#0f1115;color:#e6e6e6;margin:0;padding:12px}
+  h1{font-size:1.2em;margin:6px 0}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+  input{width:150px;padding:6px;border-radius:6px;border:1px solid #444;background:#1b1f27;color:#eee}
+  button{padding:8px 14px;border:0;border-radius:8px;color:#fff;font-weight:600;cursor:pointer}
+  .b1{background:#2d6cdf}.b2{background:#c0392b}.b3{background:#1e9e54}.b4{background:#7f8c8d}
+  canvas{background:#161a22;border:1px solid #2a2f3a;border-radius:10px;display:block;width:100%;max-width:760px}
+  #info{margin-top:8px;font-family:monospace;line-height:1.6em;font-size:.95em}
+  .on{color:#2ecc71}.off{color:#e74c3c}.warn{color:#f39c12}
+</style>
+</head>
+<body>
+<h1>🛣️ Quỹ đạo xe ESP32 (odometry)</h1>
+<div class="row">
+  <label>IP: <input id="ip" value="192.168.1.14"></label>
+  <button class="b1" id="conn">Kết nối</button>
+  <button class="b3" onclick="send('start')">▶ START</button>
+  <button class="b2" onclick="send('stop')">■ STOP</button>
+  <button class="b4" onclick="resetPath()">⟲ Reset quỹ đạo</button>
+</div>
+<div class="row">
+  <b>📷 Quét QR →</b>
+  <button class="b1" onclick="routeQR('D0')">Hàng D0 (trái)</button>
+  <button class="b1" onclick="routeQR('D1')">Hàng D1 (giữa)</button>
+  <button class="b1" onclick="routeQR('D2')">Hàng D2 (phải)</button>
+  <button class="b4" onclick="clearSim()">⟲ Xoá mô phỏng</button>
+</div>
+<canvas id="cv" width="760" height="560"></canvas>
+<div id="info">Chưa kết nối.</div>
+
+<script>
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+let pts = [];            // {x,y} mm (odometry)
+let cur = null;          // trạng thái mới nhất
+let timer = null, base = '';
+let route = [], simPos = null, simSeg = [], simTotal = 0, simDist = 0, lastTs = null, simRAF = null;
+const SIM_SPEED = 320;   // mm/s xe ảo
+
+// ---- MAP THAM CHIẾU (mm) — HOME = gốc (0,0), y hướng lên ----
+// Lưới 3×3: cạnh ô 240mm, căn giữa trục x. HOME nối vào giữa cạnh đáy.
+const CELL = 240;
+const COLS = [-360, -120, 120, 360];          // c0..c3 (x)
+const ROWS = [920, 680, 440, 200];            // hàng0..hàng3 (y, trên→dưới)
+const STUBS = [                                // nhánh cụt: [từ giữa cạnh] → [tâm ô / ra ngoài]
+  { a:[0,0],     b:[0,200]   },                // HOME (đáy-giữa, ra ngoài lưới)
+  { a:[0,920],   b:[0,800]   },                // D1: ô trên-giữa, đâm xuống
+  { a:[-360,560],b:[-240,560]},                // D0: ô giữa-trái, đâm sang phải
+  { a:[360,560], b:[240,560] },                // D2: ô giữa-phải, đâm sang trái
+];
+const NODES = [
+  { x:0,    y:800, label:'D1' },
+  { x:-240, y:560, label:'D0' },
+  { x:240,  y:560, label:'D2' },
+  { x:0,    y:0,   label:'HOME', home:true },
+];
+
+function base_url(){ return 'http://' + document.getElementById('ip').value.trim(); }
+
+document.getElementById('conn').onclick = () => {
+  base = base_url();
+  if (timer) clearInterval(timer);
+  timer = setInterval(poll, 200);   // 5 Hz
+  poll();
+};
+
+function send(cmd){ if(base) fetch(base + '/' + cmd).catch(()=>{}); }
+function resetPath(){ pts = []; if(base) fetch(base + '/reset').catch(()=>{}); draw(); }
+
+async function poll(){
+  try {
+    const r = await fetch(base + '/status', {cache:'no-store'});
+    const s = await r.json();
+    cur = s;
+    // chỉ thêm điểm khi di chuyển đủ xa (giảm nhiễu)
+    const last = pts[pts.length-1];
+    if (!last || Math.hypot(s.x-last.x, s.y-last.y) > 1.5) pts.push({x:s.x, y:s.y});
+    if (pts.length > 5000) pts.shift();
+    draw();
+    info(true);
+  } catch(e){ info(false); }
+}
+
+function bounds(){
+  // khởi tạo bằng khổ map để map luôn hiển thị đủ
+  let minx=-400,maxx=400,miny=-60,maxy=980;
+  for(const p of pts){ minx=Math.min(minx,p.x);maxx=Math.max(maxx,p.x);
+                       miny=Math.min(miny,p.y);maxy=Math.max(maxy,p.y); }
+  if(cur){ minx=Math.min(minx,cur.x);maxx=Math.max(maxx,cur.x);
+           miny=Math.min(miny,cur.y);maxy=Math.max(maxy,cur.y); }
+  return {minx,maxx,miny,maxy};
+}
+
+function draw(){
+  const W=cv.width,H=cv.height,pad=40;
+  ctx.clearRect(0,0,W,H);
+  const b=bounds();
+  const spanx=Math.max(b.maxx-b.minx,200), spany=Math.max(b.maxy-b.miny,200);
+  const sc=Math.min((W-2*pad)/spanx,(H-2*pad)/spany);
+  // map: x phải, y LÊN trên (odometry y dương -> lên)
+  const cx=p=> pad + (p.x-b.minx)*sc;
+  const cy=p=> H - (pad + (p.y-b.miny)*sc);
+
+  // lưới
+  ctx.strokeStyle='#222936'; ctx.lineWidth=1;
+  for(let gx=Math.ceil(b.minx/100)*100; gx<=b.maxx; gx+=100){
+    ctx.beginPath();ctx.moveTo(cx({x:gx,y:b.miny}),cy({x:gx,y:b.miny}));
+    ctx.lineTo(cx({x:gx,y:b.maxy}),cy({x:gx,y:b.maxy}));ctx.stroke();
+  }
+  for(let gy=Math.ceil(b.miny/100)*100; gy<=b.maxy; gy+=100){
+    ctx.beginPath();ctx.moveTo(cx({x:b.minx,y:gy}),cy({x:b.minx,y:gy}));
+    ctx.lineTo(cx({x:b.maxx,y:gy}),cy({x:b.maxx,y:gy}));ctx.stroke();
+  }
+
+  // ---- MAP tham chiếu (vẽ dưới quỹ đạo) ----
+  drawMap(cx, cy);
+
+  // điểm xuất phát
+  ctx.fillStyle='#1e9e54';
+  ctx.beginPath();ctx.arc(cx({x:0,y:0}),cy({x:0,y:0}),5,0,7);ctx.fill();
+
+  // quỹ đạo
+  if(pts.length>1){
+    ctx.strokeStyle='#2d9cdf'; ctx.lineWidth=2.5; ctx.beginPath();
+    ctx.moveTo(cx(pts[0]),cy(pts[0]));
+    for(const p of pts) ctx.lineTo(cx(p),cy(p));
+    ctx.stroke();
+  }
+
+  // vị trí + hướng hiện tại
+  if(cur){
+    const px=cx(cur), py=cy(cur), th=cur.th*Math.PI/180;
+    ctx.fillStyle='#e74c3c';
+    ctx.beginPath();ctx.arc(px,py,6,0,7);ctx.fill();
+    ctx.strokeStyle='#f1c40f'; ctx.lineWidth=3; ctx.beginPath();
+    ctx.moveTo(px,py); ctx.lineTo(px+28*Math.cos(th), py-28*Math.sin(th)); ctx.stroke();
+  }
+  // ---- Mô phỏng QR: đường đi + xe ảo ----
+  if(route.length>1){
+    ctx.strokeStyle='#9b59b6'; ctx.lineWidth=3; ctx.setLineDash([8,6]);
+    ctx.beginPath(); ctx.moveTo(cx(route[0]),cy(route[0]));
+    for(const p of route) ctx.lineTo(cx(p),cy(p));
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  if(simPos){
+    const px=cx(simPos), py=cy(simPos), th=simPos.th*Math.PI/180;
+    ctx.fillStyle='#9b59b6'; ctx.beginPath();ctx.arc(px,py,7,0,7);ctx.fill();
+    ctx.strokeStyle='#d2a3e6'; ctx.lineWidth=3; ctx.beginPath();
+    ctx.moveTo(px,py); ctx.lineTo(px+26*Math.cos(th), py-26*Math.sin(th)); ctx.stroke();
+  }
+
+  // thang ty le
+  ctx.fillStyle='#888';ctx.font='12px monospace';
+  ctx.fillText('lưới nền 100mm | map: ô 240mm | 🟠 điểm giao (tâm ô)  🟢 HOME | điểm: '+pts.length, pad, 18);
+}
+
+function drawMap(cx, cy){
+  // cạnh lưới (line đen) — vẽ đậm
+  ctx.strokeStyle='#46506a'; ctx.lineWidth=4; ctx.lineCap='round';
+  for(const y of ROWS){                 // cạnh ngang
+    ctx.beginPath();
+    ctx.moveTo(cx({x:COLS[0],y}), cy({x:COLS[0],y}));
+    ctx.lineTo(cx({x:COLS[3],y}), cy({x:COLS[3],y}));
+    ctx.stroke();
+  }
+  for(const x of COLS){                  // cạnh dọc
+    ctx.beginPath();
+    ctx.moveTo(cx({x,y:ROWS[0]}), cy({x,y:ROWS[0]}));
+    ctx.lineTo(cx({x,y:ROWS[3]}), cy({x,y:ROWS[3]}));
+    ctx.stroke();
+  }
+  // nhánh cụt (giao hàng + HOME)
+  ctx.strokeStyle='#5b6577'; ctx.lineWidth=4;
+  for(const s of STUBS){
+    ctx.beginPath();
+    ctx.moveTo(cx({x:s.a[0],y:s.a[1]}), cy({x:s.a[0],y:s.a[1]}));
+    ctx.lineTo(cx({x:s.b[0],y:s.b[1]}), cy({x:s.b[0],y:s.b[1]}));
+    ctx.stroke();
+  }
+  // chấm giao điểm lưới
+  ctx.fillStyle='#46506a';
+  for(const x of COLS) for(const y of ROWS){
+    ctx.beginPath(); ctx.arc(cx({x,y}), cy({x,y}), 3, 0, 7); ctx.fill();
+  }
+  // node giao hàng / HOME + nhãn
+  ctx.font='bold 12px monospace';
+  for(const n of NODES){
+    const px=cx(n), py=cy(n);
+    ctx.fillStyle = n.home ? '#1e9e54' : '#e67e22';
+    ctx.beginPath(); ctx.arc(px, py, 7, 0, 7); ctx.fill();
+    ctx.fillStyle='#cfd6e0';
+    ctx.fillText(n.label, px+11, py-9);
+  }
+}
+
+// ---- Đồ thị lưới cho mô phỏng định tuyến (Dijkstra) ----
+function buildGraph(){
+  const nodes={}, adj={};
+  const add=(id,x,y)=>{ nodes[id]={x,y}; adj[id]=adj[id]||[]; };
+  const link=(a,b)=>{ const d=Math.hypot(nodes[a].x-nodes[b].x, nodes[a].y-nodes[b].y);
+    adj[a].push({to:b,w:d}); adj[b].push({to:a,w:d}); };
+  for(let r=0;r<4;r++) for(let c=0;c<4;c++) add('N'+r+c, COLS[c], ROWS[r]);
+  add('M1',0,920); add('D1',0,800);          // ô trên-giữa
+  add('MH',0,200); add('H',0,0);             // HOME
+  add('M0',-360,560); add('D0',-240,560);    // ô giữa-trái
+  add('M2',360,560);  add('D2',240,560);     // ô giữa-phải
+  for(let r=0;r<4;r++) for(let c=0;c<3;c++){            // cạnh ngang
+    if(r==0&&c==1){ link('N01','M1'); link('M1','N02'); }
+    else if(r==3&&c==1){ link('N31','MH'); link('MH','N32'); }
+    else link('N'+r+c,'N'+r+(c+1));
+  }
+  for(let r=0;r<3;r++) for(let c=0;c<4;c++){            // cạnh dọc
+    if(c==0&&r==1){ link('N10','M0'); link('M0','N20'); }
+    else if(c==3&&r==1){ link('N13','M2'); link('M2','N23'); }
+    else link('N'+r+c,'N'+(r+1)+c);
+  }
+  link('M1','D1'); link('MH','H'); link('M0','D0'); link('M2','D2');  // nhánh cụt
+  return {nodes,adj};
+}
+const G = buildGraph();
+
+function dijkstra(src,dst){
+  const dist={}, prev={}, Q=new Set(Object.keys(G.nodes));
+  for(const k of Q) dist[k]=Infinity; dist[src]=0;
+  while(Q.size){
+    let u=null,best=Infinity;
+    for(const k of Q) if(dist[k]<best){ best=dist[k]; u=k; }
+    if(u==null) break; Q.delete(u);
+    for(const e of G.adj[u]) if(Q.has(e.to)&&dist[u]+e.w<dist[e.to]){ dist[e.to]=dist[u]+e.w; prev[e.to]=u; }
+  }
+  const path=[]; let u=dst; if(u!=src&&prev[u]==null) return null;
+  while(u!=null){ path.unshift(u); if(u==src) break; u=prev[u]; }
+  return path;
+}
+
+function routeQR(target){
+  const out=dijkstra('H',target), back=dijkstra(target,'H');
+  if(!out||!back){ alert('Không tìm được đường tới '+target); return; }
+  const ids=out.concat(back.slice(1));
+  route=ids.map(id=>({x:G.nodes[id].x, y:G.nodes[id].y}));
+  // dựng đoạn để chạy hoạt hình
+  simSeg=[]; let total=0;
+  for(let i=0;i<route.length-1;i++){
+    const a=route[i], b=route[i+1], len=Math.hypot(b.x-a.x,b.y-a.y);
+    simSeg.push({a,b,len,acc:total}); total+=len;
+  }
+  simTotal=total; simDist=0; lastTs=null;
+  cancelAnimationFrame(simRAF); simRAF=requestAnimationFrame(simStep);
+}
+
+function simStep(ts){
+  if(lastTs==null) lastTs=ts;
+  simDist += SIM_SPEED*(ts-lastTs)/1000; lastTs=ts;
+  if(simDist>simTotal) simDist=simTotal;
+  let seg=simSeg[simSeg.length-1], t=1;
+  for(const s of simSeg){ if(simDist<=s.acc+s.len){ seg=s; t=s.len?(simDist-s.acc)/s.len:1; break; } }
+  simPos={ x:seg.a.x+(seg.b.x-seg.a.x)*t, y:seg.a.y+(seg.b.y-seg.a.y)*t,
+           th:Math.atan2(seg.b.y-seg.a.y, seg.b.x-seg.a.x)*180/Math.PI };
+  draw();
+  if(simDist<simTotal) simRAF=requestAnimationFrame(simStep);
+}
+
+function clearSim(){ cancelAnimationFrame(simRAF); route=[]; simPos=null; draw(); }
+
+function info(ok){
+  const el=document.getElementById('info');
+  if(!ok || !cur){ el.innerHTML='<span class="off">● mất kết nối</span>'; return; }
+  el.innerHTML =
+    '<span class="on">● kết nối</span>  '+
+    'trạng thái: <b class="'+(cur.run?'on':'off')+'">'+(cur.run?'CHẠY':'DỪNG')+'</b>'+
+    (cur.lost?' <span class="warn">⚠️ MẤT LINE</span>':'')+'<br>'+
+    'x='+cur.x.toFixed(1)+' mm  y='+cur.y.toFixed(1)+' mm  θ='+cur.th.toFixed(1)+'°  '+
+    'err='+cur.err.toFixed(2)+'  spd='+cur.spd+'  encL='+cur.encL+' encR='+cur.encR;
+}
+draw();
+</script>
+</body>
+</html>

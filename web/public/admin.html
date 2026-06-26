@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🛠️ Admin — Quản lý hàng</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>🛠️ Quản lý danh mục hàng</h1>
+  <a class="badge on" href="/">← Về điều khiển</a>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>➕ Thêm / sửa hàng</h2>
+    <p class="hint">Mã = nội dung mã QR. Trùng mã sẽ ghi đè. Điểm giao là node trên bản đồ.</p>
+    <div class="row">
+      <input id="code" placeholder="Mã QR (vd A, SP-001)">
+      <input id="name" placeholder="Tên hàng (tuỳ chọn)">
+      <select id="node"></select>
+      <button class="btn b-go" id="add">Lưu</button>
+    </div>
+    <div id="msg" class="qr-result">—</div>
+
+    <h2>📦 Danh mục hiện có</h2>
+    <table class="tbl">
+      <thead><tr><th>Mã QR</th><th>Tên hàng</th><th>Điểm giao</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+</main>
+
+<script src="admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# Node
+node_modules/
+web/goods.json
+web/*.log
+
+# PlatformIO / build
+.pio/
+*.elf
+*.bin
+*.map
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/

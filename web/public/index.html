@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🚚 Xe giao hàng — Điều khiển & Giám sát</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>🚚 Xe giao hàng dò line + quét QR</h1>
+  <div style="display:flex;gap:10px;align-items:center">
+    <a class="badge on" href="/qr.html">🔳 QR test</a>
+    <a class="badge on" href="/admin.html">🛠️ Quản lý hàng</a>
+    <div id="conn" class="badge off">● mất kết nối</div>
+  </div>
+</header>
+
+<main>
+  <!-- CỘT TRÁI: bản đồ + trạng thái -->
+  <section class="panel">
+    <h2>🗺️ Bản đồ &amp; vị trí xe</h2>
+    <canvas id="map" width="520" height="560"></canvas>
+    <div id="status" class="status">Đang chờ dữ liệu…</div>
+  </section>
+
+  <!-- CỘT PHẢI: điều khiển + QR + log -->
+  <section class="panel">
+    <h2>📷 Quét QR (camera điện thoại)</h2>
+    <div id="reader"></div>
+    <div class="row">
+      <button class="btn b-start" id="qrStart">Bật camera</button>
+      <button class="btn b-stop"  id="qrStop">Tắt camera</button>
+    </div>
+    <div id="qrResult" class="qr-result">Chưa quét.</div>
+
+    <h2>🎮 Điều khiển</h2>
+    <div class="row">
+      <button class="btn b-go" onclick="go('D0')">Giao D0</button>
+      <button class="btn b-go" onclick="go('D1')">Giao D1</button>
+      <button class="btn b-go" onclick="go('D2')">Giao D2</button>
+    </div>
+    <div class="row">
+      <button class="btn b-home" onclick="cmd({cmd:'home'})">🏠 Về HOME</button>
+      <button class="btn b-stop" onclick="cmd({cmd:'stop'})">■ DỪNG</button>
+    </div>
+    <h3>Lái tay</h3>
+    <div class="dpad">
+      <button class="btn" onmousedown="manual('F')" ontouchstart="manual('F')">▲</button>
+      <div class="dpad-mid">
+        <button class="btn" onmousedown="manual('L')" ontouchstart="manual('L')">◀</button>
+        <button class="btn b-stop" onmousedown="manual('S')" ontouchstart="manual('S')">■</button>
+        <button class="btn" onmousedown="manual('R')" ontouchstart="manual('R')">▶</button>
+      </div>
+      <button class="btn" onmousedown="manual('B')" ontouchstart="manual('B')">▼</button>
+    </div>
+
+    <h2>📜 Nhật ký giao hàng</h2>
+    <ul id="log" class="log"></ul>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

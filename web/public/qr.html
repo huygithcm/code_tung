@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🔳 Mã QR test</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs@gh-pages/qrcode.min.js"></script>
+<style>
+  .qr-grid { display: flex; flex-wrap: wrap; gap: 14px; }
+  .qr-card { background: #fff; border-radius: 10px; padding: 12px; text-align: center; color: #111; width: 180px; }
+  .qr-card .img { display: flex; justify-content: center; }
+  .qr-card .code { font-family: monospace; font-weight: 700; margin-top: 8px; }
+  .qr-card .meta { font-size: .82em; color: #555; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔳 Mã QR test</h1>
+  <a class="badge on" href="/">← Về điều khiển</a>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>✏️ Tạo QR tuỳ ý</h2>
+    <p class="hint">Nhập nội dung bất kỳ (vd <code>A</code>, <code>SP-001</code>, hoặc <code>D1</code>) rồi quét thử.</p>
+    <div class="row">
+      <input id="txt" placeholder="Nội dung QR" value="A">
+      <button class="btn b-go" id="gen">Tạo</button>
+    </div>
+    <div id="custom" class="qr-grid" style="margin-top:10px"></div>
+
+    <h2>📦 QR theo danh mục hàng</h2>
+    <p class="hint">Sinh tự động từ danh mục (quản lý ở <a href="/admin.html">trang admin</a>). Quét sẽ tự điều phối giao.</p>
+    <div id="cards" class="qr-grid"></div>
+  </section>
+</main>
+
+<script>
+function makeCard(container, code, meta) {
+  const card = document.createElement('div');
+  card.className = 'qr-card';
+  const img = document.createElement('div'); img.className = 'img';
+  card.appendChild(img);
+  const c = document.createElement('div'); c.className = 'code'; c.textContent = code; card.appendChild(c);
+  if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; card.appendChild(m); }
+  container.appendChild(card);
+  new QRCode(img, { text: code, width: 150, height: 150, correctLevel: QRCode.CorrectLevel.M });
+}
+
+document.getElementById('gen').onclick = () => {
+  const v = document.getElementById('txt').value.trim();
+  if (!v) return;
+  const box = document.getElementById('custom'); box.innerHTML = '';
+  makeCard(box, v, 'QR tuỳ ý');
+};
+document.getElementById('gen').click();
+
+fetch('/api/goods').then(r => r.json()).then(goods => {
+  const box = document.getElementById('cards');
+  if (!goods.length) { box.innerHTML = '<p class="hint">Chưa có hàng nào.</p>'; return; }
+  goods.forEach(g => makeCard(box, g.code, `${g.name || ''} → ${g.node}`));
+});
+</script>
+</body>
+</html>
