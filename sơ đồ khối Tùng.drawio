@@ -1,0 +1,84 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Trang-1" id="QWm0vYPkju_t2sN7B6IS">
+    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="oTfokPhy6fm09WPJnivn-24" parent="1" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fontFamily=Times New Roman;" value="" vertex="1">
+          <mxGeometry height="570" width="750" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-14" edge="1" parent="1" source="oTfokPhy6fm09WPJnivn-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontFamily=Times New Roman;" target="oTfokPhy6fm09WPJnivn-11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Times New Roman;" value="kHỐI CÔNG SUẤT (L298N)" vertex="1">
+          <mxGeometry height="60" width="120" x="129" y="370" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-3" edge="1" parent="1" source="oTfokPhy6fm09WPJnivn-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontFamily=Times New Roman;" target="oTfokPhy6fm09WPJnivn-1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-5" edge="1" parent="1" source="oTfokPhy6fm09WPJnivn-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;fontFamily=Times New Roman;" target="oTfokPhy6fm09WPJnivn-4" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-18" edge="1" parent="1" source="oTfokPhy6fm09WPJnivn-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;fontFamily=Times New Roman;" target="oTfokPhy6fm09WPJnivn-16">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Times New Roman;" value="KHỐI PIN NGUỒN 12V" vertex="1">
+          <mxGeometry height="60" width="120" x="369" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-9" edge="1" parent="1" source="oTfokPhy6fm09WPJnivn-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;fontFamily=Times New Roman;" target="oTfokPhy6fm09WPJnivn-8" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-4" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Times New Roman;" value="HẠ ÁP 5V (LM2596)&amp;nbsp;" vertex="1">
+          <mxGeometry height="60" width="120" x="369" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-22" edge="1" parent="1" source="oTfokPhy6fm09WPJnivn-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;dashed=1;fontFamily=Times New Roman;" target="oTfokPhy6fm09WPJnivn-8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-6" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Times New Roman;" value="WED MẠNG CỤC BỘ" vertex="1">
+          <mxGeometry height="60" width="120" x="369" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-10" edge="1" parent="1" source="oTfokPhy6fm09WPJnivn-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;fontFamily=Times New Roman;" target="oTfokPhy6fm09WPJnivn-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-15" connectable="0" parent="oTfokPhy6fm09WPJnivn-10" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontFamily=Times New Roman;" value="WFI" vertex="1">
+          <mxGeometry relative="1" x="-0.1143" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-21" edge="1" parent="1" source="oTfokPhy6fm09WPJnivn-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;fontFamily=Times New Roman;" target="oTfokPhy6fm09WPJnivn-1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-27" connectable="0" parent="oTfokPhy6fm09WPJnivn-21" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontFamily=Times New Roman;" value="PWM" vertex="1">
+          <mxGeometry relative="1" x="0.25" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-8" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Times New Roman;" value="KHỐI VI ĐIỀU KHIỂN&lt;div&gt;̣̣̣̣̣̣(ESP32)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="120" x="369" y="370" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-11" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Times New Roman;" value="KHỐI ĐỘNG CƠ" vertex="1">
+          <mxGeometry height="60" width="120" x="129" y="500" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-19" edge="1" parent="1" source="oTfokPhy6fm09WPJnivn-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;fontFamily=Times New Roman;" target="oTfokPhy6fm09WPJnivn-8">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="639" y="400" />
+            </Array>
+            <mxPoint x="639" y="460" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-26" connectable="0" parent="oTfokPhy6fm09WPJnivn-19" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontFamily=Times New Roman;" value="DIGITAL" vertex="1">
+          <mxGeometry relative="1" x="0.0609" y="-2" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-16" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Times New Roman;" value="KHỐI CẢM BIẾN&amp;nbsp;" vertex="1">
+          <mxGeometry height="60" width="120" x="579" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="oTfokPhy6fm09WPJnivn-23" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Times New Roman;" value="&lt;b&gt;&lt;font style=&quot;font-size: 16px;&quot;&gt;SƠ ĐỒ KHỐI HỆ THỐNG&lt;/font&gt;&lt;/b&gt;" vertex="1">
+          <mxGeometry height="40" width="240" x="9" y="80" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
