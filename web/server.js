@@ -71,6 +71,7 @@ const state = {
   cargo: true,                      // IR: còn hàng?
   source: 'none',
   log: [],                          // lịch sử giao hàng
+  carlog: [],                       // log thô từ xe ESP32 (cửa sổ "Log xe")
 };
 
 function broadcast(obj) {
@@ -84,6 +85,13 @@ function logEvent(text) {
   state.log.unshift(e);
   state.log = state.log.slice(0, 50);
   broadcast({ type: 'log', entry: e });
+}
+// Log thô do xe ESP32 gửi lên (giữ 200 dòng gần nhất) → cửa sổ "Log xe" trên web
+function addCarLog(text) {
+  const e = { t: new Date().toLocaleTimeString('vi-VN'), text: String(text) };
+  state.carlog.push(e);
+  state.carlog = state.carlog.slice(-200);
+  broadcast({ type: 'carlog', entry: e });
 }
 
 // ---- Định tuyến + điều phối 1 đơn giao hàng ----
@@ -129,6 +137,9 @@ function onConnection(ws) {
       return;
     }
 
+    // Log thô từ xe → cửa sổ "Log xe" trên web
+    if (ws._role === 'car' && m.type === 'clog') { addCarLog(m.text); return; }
+
     // Trạng thái từ xe thật → cập nhật + phát cho web (PLAN: xe→web)
     if (ws._role === 'car') {
       if (m.status) state.status = m.status;
@@ -152,6 +163,16 @@ function onConnection(ws) {
       case 'home': dispatch('HOME'); break;
       case 'drop': manual({ cmd: 'drop' }); break;
       case 'manual': manual({ cmd: 'manual', dir: m.dir }); break;  // F/B/L/R tay
+      case 'calib':                                     // hiệu chuẩn line từ xa
+        if (carSocket && carSocket.readyState === 1) {
+          carSocket.send(JSON.stringify({ cmd: 'calib' }));
+          logEvent('🎯 Yêu cầu calib line — quét cảm biến qua vạch khi nghe tiếng bíp');
+        } else logEvent('⚠️ Chưa có xe để calib');
+        break;
+      case 'tune':                                      // chỉnh tốc độ/PID runtime
+        if (carSocket && carSocket.readyState === 1) carSocket.send(JSON.stringify(m));
+        else logEvent('⚠️ Chưa có xe để chỉnh tham số');
+        break;
     }
   });
 

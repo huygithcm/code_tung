@@ -40,6 +40,7 @@
     <div class="row">
       <button class="btn b-home" onclick="cmd({cmd:'home'})">🏠 Về HOME</button>
       <button class="btn b-stop" onclick="cmd({cmd:'stop'})">■ DỪNG</button>
+      <button class="btn b-go" onclick="calibLine()">🎯 Calib line</button>
     </div>
     <h3>Lái tay</h3>
     <div class="dpad">
@@ -52,8 +53,24 @@
       <button class="btn" onmousedown="manual('B')" ontouchstart="manual('B')">▼</button>
     </div>
 
+    <h2>⚙️ Chỉnh tốc độ / PID (runtime)</h2>
+    <div class="tune">
+      <label>baseSpeed<input id="t-base" type="number" min="0" max="255" value="200"></label>
+      <label>MIN PWM<input id="t-min" type="number" min="0" max="255" value="120"></label>
+      <label>Kp<input id="t-kp" type="number" step="0.5" value="25"></label>
+      <label>Kd<input id="t-kd" type="number" step="0.5" value="15"></label>
+      <label>TURN_MIN<input id="t-turnmin" type="number" min="0" max="255" value="160"></label>
+      <label>speed tay<input id="t-speed" type="number" min="0" max="255" value="210"></label>
+      <button class="btn b-go" onclick="applyTune()">Áp dụng</button>
+    </div>
+
     <h2>📜 Nhật ký giao hàng</h2>
     <ul id="log" class="log"></ul>
+
+    <h2>🖥️ Log xe (ESP32)
+      <button class="btn b-stop" style="float:right;padding:4px 10px;font-size:.8em" onclick="clearCarLog()">Xóa</button>
+    </h2>
+    <div id="carlog" class="carlog"></div>
   </section>
 </main>
 

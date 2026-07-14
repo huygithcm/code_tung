@@ -1,6 +1,6 @@
 <mxfile host="65bd71144e">
     <diagram name="LuuDo-GiaiThuat" id="luudo-giaithuat-1">
-        <mxGraphModel dx="2723" dy="2746" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+        <mxGraphModel dx="541" dy="1721" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
@@ -104,11 +104,11 @@
         </mxGraphModel>
     </diagram>
     <diagram name="LuuDo-Web" id="luudo-web-1">
-        <mxGraphModel dx="2415" dy="2089" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+        <mxGraphModel dx="1479" dy="1721" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
-                <mxCell id="tLkhFqMHTpbjXbiYeUTJ-6" value="" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;" vertex="1" parent="1">
+                <mxCell id="tLkhFqMHTpbjXbiYeUTJ-6" value="" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;" parent="1" vertex="1">
                     <mxGeometry x="-210" y="-110" width="1040" height="1280" as="geometry"/>
                 </mxCell>
                 <mxCell id="w1" value="BẮT ĐẦU" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fontFamily=Times New Roman;fillColor=none;strokeColor=#000000;" parent="1" vertex="1">
@@ -144,13 +144,13 @@
                 <mxCell id="wroute" value="Tính đường đi, sinh chuỗi bước di chuyển" style="rounded=0;whiteSpace=wrap;html=1;fontFamily=Times New Roman;" parent="1" vertex="1">
                     <mxGeometry x="60" y="850" width="180" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="tLkhFqMHTpbjXbiYeUTJ-1" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;exitX=1.009;exitY=0.502;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="wcar" target="werr">
+                <mxCell id="tLkhFqMHTpbjXbiYeUTJ-1" style="edgeStyle=orthogonalEdgeStyle;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;exitX=1.009;exitY=0.502;exitDx=0;exitDy=0;exitPerimeter=0;" parent="1" source="wcar" target="werr" edge="1">
                     <mxGeometry relative="1" as="geometry">
                         <mxPoint x="380" y="790" as="targetPoint"/>
                         <mxPoint x="240" y="976.86" as="sourcePoint"/>
                     </mxGeometry>
                 </mxCell>
-                <mxCell id="tLkhFqMHTpbjXbiYeUTJ-3" value="không" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="tLkhFqMHTpbjXbiYeUTJ-1">
+                <mxCell id="tLkhFqMHTpbjXbiYeUTJ-3" value="không" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" parent="tLkhFqMHTpbjXbiYeUTJ-1" vertex="1" connectable="0">
                     <mxGeometry x="-0.3684" y="-2" relative="1" as="geometry">
                         <mxPoint x="-30" y="-2" as="offset"/>
                     </mxGeometry>
@@ -223,7 +223,7 @@
                 <mxCell id="we17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontFamily=Times New Roman;" parent="1" source="wupd" target="wdone" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="tLkhFqMHTpbjXbiYeUTJ-5" value="&#xa;&lt;b style=&quot;forced-color-adjust: none; color: rgb(63, 63, 63); scrollbar-color: rgb(226, 226, 226) rgb(251, 251, 251); font-family: &amp;quot;Times New Roman&amp;quot;; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; letter-spacing: normal; orphans: 2; text-align: center; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; background-color: rgb(251, 251, 251); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; font-size: 16px;&quot;&gt;LƯU ĐỒ GIẢI THUẬT GIAO DIỆN WEB&lt;/b&gt;&#xa;&#xa;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                <mxCell id="tLkhFqMHTpbjXbiYeUTJ-5" value="&#xa;&lt;b style=&quot;forced-color-adjust: none; color: rgb(63, 63, 63); scrollbar-color: rgb(226, 226, 226) rgb(251, 251, 251); font-family: &amp;quot;Times New Roman&amp;quot;; font-style: normal; font-variant-ligatures: normal; font-variant-caps: normal; letter-spacing: normal; orphans: 2; text-align: center; text-indent: 0px; text-transform: none; widows: 2; word-spacing: 0px; -webkit-text-stroke-width: 0px; white-space: normal; background-color: rgb(251, 251, 251); text-decoration-thickness: initial; text-decoration-style: initial; text-decoration-color: initial; font-size: 16px;&quot;&gt;LƯU ĐỒ GIẢI THUẬT GIAO DIỆN WEB&lt;/b&gt;&#xa;&#xa;" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
                     <mxGeometry x="-170" y="-80" width="370" height="90" as="geometry"/>
                 </mxCell>
             </root>

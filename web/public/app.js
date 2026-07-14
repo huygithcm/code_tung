@@ -16,10 +16,11 @@ function connect() {
   ws.onclose = () => { setConn(false); setTimeout(connect, 1500); };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.type === 'hello') { st = m.state; renderLog(m.state.log); }
+    if (m.type === 'hello') { st = m.state; renderLog(m.state.log); renderCarLog(m.state.carlog); }
     else if (m.type === 'state') st = m.state;
     else if (m.type === 'route') ROUTE = m.plan;
     else if (m.type === 'log')   prependLog(m.entry);
+    else if (m.type === 'carlog') appendCarLog(m.entry);
     renderStatus(); draw();
   };
 }
@@ -34,6 +35,17 @@ function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
 function go(node) { ROUTE = null; send({ cmd: 'go', node }); }
 function cmd(o)   { if (o.cmd === 'home') ROUTE = null; send(o); }
 function manual(dir) { send(dir === 'S' ? { cmd: 'stop' } : { cmd: 'manual', dir }); }
+function calibLine() {
+  if (confirm('Calib line: khi nghe TONE bắt đầu, quét thanh cảm biến qua vạch đen & nền trắng trong 5s. Bắt đầu?'))
+    send({ cmd: 'calib' });
+}
+function numVal(id) { const v = parseFloat(document.getElementById(id).value); return isNaN(v) ? undefined : v; }
+function applyTune() {
+  const o = { cmd: 'tune' };
+  const map = { base: 't-base', min: 't-min', kp: 't-kp', kd: 't-kd', turnmin: 't-turnmin', speed: 't-speed' };
+  for (const k in map) { const v = numVal(map[k]); if (v !== undefined) o[k] = v; }
+  send(o);
+}
 
 // ---------- Tải hình học map rồi vẽ ----------
 fetch('/map').then(r => r.json()).then(m => { MAP = m; buildGoButtons(); draw(); });
@@ -128,6 +140,25 @@ function renderLog(list) { const ul = document.getElementById('log'); ul.innerHT
 function prependLog(e) { const ul = document.getElementById('log'); const li = liOf(e); ul.insertBefore(li, ul.firstChild); }
 function addLi(e) { document.getElementById('log').appendChild(liOf(e)); }
 function liOf(e) { const li = document.createElement('li'); li.innerHTML = `<span class="t">${e.t}</span>${e.text}`; return li; }
+
+// ---------- Log xe (ESP32) ----------
+function carLogRow(e) {
+  const esc = String(e.text).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  return `<div class="cl-row"><span class="t">${e.t}</span>${esc}</div>`;
+}
+function renderCarLog(list) {
+  const box = document.getElementById('carlog'); if (!box) return;
+  box.innerHTML = (list || []).map(carLogRow).join('');
+  box.scrollTop = box.scrollHeight;
+}
+function appendCarLog(e) {
+  const box = document.getElementById('carlog'); if (!box) return;
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.insertAdjacentHTML('beforeend', carLogRow(e));
+  while (box.childElementCount > 200) box.removeChild(box.firstChild);
+  if (atBottom) box.scrollTop = box.scrollHeight;   // tự cuộn nếu đang ở đáy
+}
+function clearCarLog() { const box = document.getElementById('carlog'); if (box) box.innerHTML = ''; }
 
 // ---------- Quét QR (html5-qrcode) ----------
 let qr = null;
