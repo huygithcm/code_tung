@@ -145,7 +145,7 @@ String route[48];                 // chuoi buoc F/L/R/B/DROP/HOME
 int    routeN = 0, routeIdx = 0;  // so buoc + buoc dang chay
 String routeTarget = "";          // ma o dang giao (C1..C9), "" = khong
 bool   running = false;           // dang chay 1 don giao?
-int    stepPhase = 0;             // 0 = re/khoi dong doan, 1 = dang tien
+int    stepPhase = 0;             // 0 = re/khoi dong doan, 1 = tien bam line, 2 = bo canh tam nga tu
 float  segStartX = 0, segStartY = 0;  // moc odometry dau doan
 bool   leftStart = false;         // da roi giao diem xuat phat cua doan chua
 bool   cargo = true;              // con hang tren xe?
@@ -153,6 +153,8 @@ int    lineCount = 0;             // so mat thay den o lan doc gan nhat
 const float MIN_EDGE = 120;       // mm toi thieu 1 doan truoc khi cho ket thuc
 const float MAX_EDGE = 750;       // mm toi da 1 doan (chan runaway neu miss giao diem)
 const int   INTERSECT_N = 5;      // >= so mat thay den => coi la giao diem (nga tu)
+int    CENTER_OFFSET_MM = 70;     // sau khi thay nga tu, bo them de canh TRUC BANH vao tam (= k/c cam bien -> truc banh)
+float  centerStartMM = 0;         // moc quang duong khi bat dau bo canh tam
 
 // ===================== Encoder ISR (quadrature) =====================
 void IRAM_ATTR isrEncL() {
@@ -745,16 +747,27 @@ void routeStep() {
     return;
   }
 
+  // --- Pha 2: bo thang them de canh TRUC BANH vao tam nga tu roi moi re ---
+  if (stepPhase == 2) {
+    float d = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f - centerStartMM;
+    if (d < CENTER_OFFSET_MM) { driveA(baseSpeed); driveB(baseSpeed); }   // bo thang
+    else { stopMotors(); stepPhase = 0; routeIdx++; }                     // da canh tam -> buoc ke
+    return;
+  }
+
   // --- Pha 1: tien bam line den giao diem ke (hoac het line = tam o) ---
   lineFollowStep();
   float trav = hypotf(poseX - segStartX, poseY - segStartY);
   if (!leftStart && lineCount <= 2 && !lineLost) leftStart = true;   // da roi nga tu cu
-  bool done = false;
+  bool reached = false;
   if (trav > MIN_EDGE) {
-    if (leftStart && (lineCount >= INTERSECT_N || lineLost)) done = true;  // toi nga tu / het line
-    if (trav > MAX_EDGE) done = true;                                       // an toan
+    if (leftStart && (lineCount >= INTERSECT_N || lineLost)) reached = true;  // toi nga tu / het line
+    if (trav > MAX_EDGE) reached = true;                                       // an toan
   }
-  if (done) { stopMotors(); stepPhase = 0; routeIdx++; }
+  if (reached) {                       // thay nga tu -> chuyen sang bo canh tam (khong re ngay = tranh re som)
+    centerStartMM = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f;
+    stepPhase = 2;
+  }
 }
 
 // ===================== Hieu chuan quang duong =====================
@@ -826,13 +839,14 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         if (!doc["wheeld"].isNull())   WHEEL_DIAMETER_MM = (float)doc["wheeld"];
         if (!doc["ppr"].isNull())      ENCODER_PPR = (int)doc["ppr"];
         if (!doc["wbase"].isNull())    WHEEL_BASE_MM = (float)doc["wbase"];
+        if (!doc["center"].isNull())   CENTER_OFFSET_MM = constrain((int)doc["center"], 0, 300);
         hubLog("[tune] base=" + String(baseSpeed) + " min=" + String(MOTOR_MIN_PWM) +
                " kp=" + String(Kp, 1) + " kd=" + String(Kd, 1) +
                " turnmin=" + String(TURN_MIN) + " turnmax=" + String(TURN_MAX) +
                " kpt=" + String(KpT, 1) + " kdt=" + String(KdT, 1) +
                " tol=" + String(TURN_TOL_DEG, 1) + " speed=" + String(motorSpeed) +
                " wheeld=" + String(WHEEL_DIAMETER_MM, 2) + " ppr=" + String(ENCODER_PPR) +
-               " wbase=" + String(WHEEL_BASE_MM, 1));
+               " wbase=" + String(WHEEL_BASE_MM, 1) + " center=" + String(CENTER_OFFSET_MM));
       }
       else if (!strcmp(cmd, "turn")) {                  // test 1 cu re (deg): +trai / -phai
         float deg = doc["deg"] | 90.0;
