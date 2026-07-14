@@ -179,6 +179,9 @@ function onConnection(ws) {
           logEvent(`🔄 Test rẽ ${m.deg}°`);
         } else logEvent('⚠️ Chưa có xe để test rẽ');
         break;
+      case 'enc':                                       // đọc encoder (hiệu chuẩn chiều đếm)
+        if (carSocket && carSocket.readyState === 1) carSocket.send(JSON.stringify(m));
+        break;
     }
   });
 

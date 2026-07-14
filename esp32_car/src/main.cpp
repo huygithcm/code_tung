@@ -133,7 +133,7 @@ long  lastOdoL = 0, lastOdoR = 0;
 // --- Re chuan bang PID (quay tai cho theo goc) ---
 float KpT = 200.0, KdT = 35.0;    // he so PID re (autotune: err<1deg, settled ~0.6s)
 float TURN_TOL_DEG = 1.5;         // sai so chap nhan (do)
-int   TURN_MIN = 160;             // PWM toi thieu de thang ma sat khi quay
+int   TURN_MIN = 200;             // PWM toi thieu de thang ma sat khi quay (200: giu luc toi sat dich -> re du goc, khong ket o ~45 do)
 int   TURN_MAX = 255;             // PWM toi da khi quay (full PWM de du luc pha ma sat khi chinh)
 bool  turnVerbose = false;        // true = xuat trace step-response (cho autotune)
 bool  INVERT_TURN = false;        // dao chieu actuation vong re (sua bang serial: TI)
@@ -800,6 +800,12 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         float deg = doc["deg"] | 90.0;
         hubLog("[turn] test re " + String(deg, 0) + " do...");
         turnRelative(deg);
+      }
+      else if (!strcmp(cmd, "enc")) {                   // doc encoder (hieu chuan chieu dem)
+        if (!doc["reset"].isNull()) resetOdometry();
+        hubLog("[enc] L=" + String(encL) + " R=" + String(encR) +
+               " x=" + String(poseX, 0) + " y=" + String(poseY, 0) +
+               " th=" + String(poseTheta * 180.0f / PI, 1));
       }
       break;
     }
