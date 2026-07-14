@@ -59,9 +59,23 @@
       <label>MIN PWM<input id="t-min" type="number" min="0" max="255" value="120"></label>
       <label>Kp<input id="t-kp" type="number" step="0.5" value="25"></label>
       <label>Kd<input id="t-kd" type="number" step="0.5" value="15"></label>
-      <label>TURN_MIN<input id="t-turnmin" type="number" min="0" max="255" value="160"></label>
       <label>speed tay<input id="t-speed" type="number" min="0" max="255" value="210"></label>
       <button class="btn b-go" onclick="applyTune()">Áp dụng</button>
+    </div>
+
+    <h3>Hiệu chuẩn rẽ (vị trí)</h3>
+    <div class="tune">
+      <label>TURN_MIN<input id="t-turnmin" type="number" min="0" max="255" value="200"></label>
+      <label>TURN_MAX<input id="t-turnmax" type="number" min="0" max="255" value="255"></label>
+      <label>KpT<input id="t-kpt" type="number" step="5" value="200"></label>
+      <label>KdT<input id="t-kdt" type="number" step="1" value="35"></label>
+      <label>tol(°)<input id="t-turntol" type="number" step="0.5" value="1.5"></label>
+      <button class="btn b-go" onclick="applyTune()">Áp dụng</button>
+    </div>
+    <div class="tune">
+      <label>góc rẽ(°)<input id="t-deg" type="number" step="15" value="90"></label>
+      <button class="btn b-go" onclick="testTurn()">🔄 Test rẽ</button>
+      <span class="hint" style="align-self:center">+trái / −phải · xem kết quả ở Log xe</span>
     </div>
 
     <h2>📜 Nhật ký giao hàng</h2>

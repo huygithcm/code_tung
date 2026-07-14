@@ -349,9 +349,12 @@ void turnRelative(float deg) {
   float achievedDeg = (poseTheta - startTheta) * 180.0f / PI;
   float errDeg = deg - achievedDeg;
   unsigned long ms = millis() - t0;
-  // Dong ket qua co cau truc cho script tu doc/hieu chuan:
-  Serial.printf("[turnres] kp=%.1f kd=%.1f tgt=%.1f final=%.2f err=%.2f over=%.2f ms=%lu settled=%d\n",
-                KpT, KdT, deg, achievedDeg, errDeg, maxOverDeg, ms, settled ? 1 : 0);
+  // Dong ket qua co cau truc cho script tu doc/hieu chuan (Serial + Log xe tren web):
+  char res[160];
+  snprintf(res, sizeof(res),
+    "[turnres] tgt=%.1f dat=%.2f err=%.2f votlo=%.2f ms=%lu %s",
+    deg, achievedDeg, errDeg, maxOverDeg, ms, settled ? "ON DINH" : "TIMEOUT");
+  hubLog(res);
 
   // Xuat trace day du de host nhan dang he & tinh PID toi uu (1 lan test)
   if (turnVerbose) {
@@ -782,10 +785,21 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         if (!doc["kp"].isNull())       Kp = (float)doc["kp"];
         if (!doc["kd"].isNull())       Kd = (float)doc["kd"];
         if (!doc["turnmin"].isNull())  TURN_MIN = constrain((int)doc["turnmin"], 0, 255);
+        if (!doc["turnmax"].isNull())  TURN_MAX = constrain((int)doc["turnmax"], 0, 255);
         if (!doc["speed"].isNull())    motorSpeed = constrain((int)doc["speed"], 0, 255);
+        if (!doc["kpt"].isNull())      KpT = (float)doc["kpt"];
+        if (!doc["kdt"].isNull())      KdT = (float)doc["kdt"];
+        if (!doc["turntol"].isNull())  TURN_TOL_DEG = (float)doc["turntol"];
         hubLog("[tune] base=" + String(baseSpeed) + " min=" + String(MOTOR_MIN_PWM) +
                " kp=" + String(Kp, 1) + " kd=" + String(Kd, 1) +
-               " turnmin=" + String(TURN_MIN) + " speed=" + String(motorSpeed));
+               " turnmin=" + String(TURN_MIN) + " turnmax=" + String(TURN_MAX) +
+               " kpt=" + String(KpT, 1) + " kdt=" + String(KdT, 1) +
+               " tol=" + String(TURN_TOL_DEG, 1) + " speed=" + String(motorSpeed));
+      }
+      else if (!strcmp(cmd, "turn")) {                  // test 1 cu re (deg): +trai / -phai
+        float deg = doc["deg"] | 90.0;
+        hubLog("[turn] test re " + String(deg, 0) + " do...");
+        turnRelative(deg);
       }
       break;
     }

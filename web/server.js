@@ -173,6 +173,12 @@ function onConnection(ws) {
         if (carSocket && carSocket.readyState === 1) carSocket.send(JSON.stringify(m));
         else logEvent('⚠️ Chưa có xe để chỉnh tham số');
         break;
+      case 'turn':                                      // test 1 cú rẽ (hiệu chuẩn vị trí)
+        if (carSocket && carSocket.readyState === 1) {
+          carSocket.send(JSON.stringify(m));
+          logEvent(`🔄 Test rẽ ${m.deg}°`);
+        } else logEvent('⚠️ Chưa có xe để test rẽ');
+        break;
     }
   });
 

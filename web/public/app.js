@@ -42,10 +42,12 @@ function calibLine() {
 function numVal(id) { const v = parseFloat(document.getElementById(id).value); return isNaN(v) ? undefined : v; }
 function applyTune() {
   const o = { cmd: 'tune' };
-  const map = { base: 't-base', min: 't-min', kp: 't-kp', kd: 't-kd', turnmin: 't-turnmin', speed: 't-speed' };
-  for (const k in map) { const v = numVal(map[k]); if (v !== undefined) o[k] = v; }
+  const map = { base: 't-base', min: 't-min', kp: 't-kp', kd: 't-kd', speed: 't-speed',
+                turnmin: 't-turnmin', turnmax: 't-turnmax', kpt: 't-kpt', kdt: 't-kdt', turntol: 't-turntol' };
+  for (const k in map) { const el = document.getElementById(map[k]); if (!el) continue; const v = numVal(map[k]); if (v !== undefined) o[k] = v; }
   send(o);
 }
+function testTurn() { const d = numVal('t-deg'); if (d !== undefined) send({ cmd: 'turn', deg: d }); }
 
 // ---------- Tải hình học map rồi vẽ ----------
 fetch('/map').then(r => r.json()).then(m => { MAP = m; buildGoButtons(); draw(); });
