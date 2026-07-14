@@ -1,8 +1,8 @@
 // ============================================================================
-// server.js — Hub trung chuyển WebSocket + bộ định tuyến + giả lập xe.
+// server.js — Hub trung chuyển WebSocket + bộ định tuyến.
 //   [Điện thoại/PC web] ⇄ WS ⇄ [server này] ⇄ WS ⇄ [ESP32 xe]
 // Server là "trí tuệ": nhận lệnh/QR từ web → tính đường → gửi steps cho xe;
-// nhận trạng thái xe → phát cho mọi web. Khi chưa có xe thật → tự giả lập.
+// nhận trạng thái xe → phát cho mọi web.
 // (PLAN.md mục 1, 4, 5, GĐ E)
 // ============================================================================
 
@@ -33,7 +33,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Endpoint tiện cho web lấy hình học map để vẽ (1 nguồn sự thật từ server)
 app.get('/map', (_req, res) => {
   res.json({
-    cell: map.CELL, cols: map.COLS, rows: map.ROWS,
+    cellW: map.CELL_W, cellH: map.CELL_H, cols: map.COLS, rows: map.ROWS,
     stubs: map.STUBS, points: map.POINTS,
   });
 });
@@ -67,9 +67,9 @@ let carSocket = null;               // ESP32 thật (nếu có)
 const state = {
   status: 'idle',                   // idle | moving | arrived | error
   node: null,                       // điểm đang tới
-  pos: { x: 0, y: 0, th: 90 },      // vị trí xe (mm)
+  pos: { x: 0, y: 0, th: 0 },       // vị trí xe (mm); HOME nhìn sang +x → θ=0
   cargo: true,                      // IR: còn hàng?
-  source: cfg.SIMULATOR ? 'sim' : 'none',
+  source: 'none',
   log: [],                          // lịch sử giao hàng
 };
 
@@ -99,67 +99,17 @@ function dispatch(target, qr) {
     // Có xe thật → gửi chuỗi lệnh tương đối
     carSocket.send(JSON.stringify({ cmd: 'route', target, steps: plan.steps }));
     state.source = 'car';
-  } else if (cfg.SIMULATOR) {
-    state.source = 'sim';
-    runSimulator(plan);
+    state.status = 'moving'; state.node = target; pushState();
   } else {
-    logEvent('⚠️ Chưa có xe kết nối và SIMULATOR=false');
+    logEvent('⚠️ Chưa có xe kết nối');
   }
-}
-
-// ---- Giả lập xe chạy dọc waypoint (khi chưa có ESP32) ----
-let simTimer = null;
-function runSimulator(plan) {
-  clearInterval(simTimer);
-  const wps = plan.waypoints;
-  const segs = [];
-  let total = 0;
-  for (let i = 0; i < wps.length - 1; i++) {
-    const a = wps[i], b = wps[i + 1];
-    const len = Math.hypot(b.x - a.x, b.y - a.y);
-    segs.push({ a, b, len, acc: total, toId: b.id }); total += len;
-  }
-  // Đã ở sẵn đích/HOME (không có đoạn đường nào) → dừng an toàn, khỏi chạy interval.
-  if (!segs.length || total === 0) {
-    simTimer = null;
-    state.status = 'idle'; state.node = null; state.cargo = true;
-    logEvent(`🏠 Đã ở ${plan.target} — không cần di chuyển`);
-    pushState();
-    return;
-  }
-  let dist = 0, dropped = false;
-  state.status = 'moving'; state.node = plan.target; state.cargo = true; pushState();
-  const dt = 0.05; // 20 Hz
-  simTimer = setInterval(() => {
-    dist += cfg.SIM_SPEED * dt;
-    if (dist > total) dist = total;
-    let seg = segs[segs.length - 1], t = 1;
-    for (const s of segs) { if (dist <= s.acc + s.len) { seg = s; t = s.len ? (dist - s.acc) / s.len : 1; break; } }
-    state.pos = {
-      x: seg.a.x + (seg.b.x - seg.a.x) * t,
-      y: seg.a.y + (seg.b.y - seg.a.y) * t,
-      th: Math.atan2(seg.b.y - seg.a.y, seg.b.x - seg.a.x) * 180 / Math.PI,
-    };
-    // Tới điểm giao → thả hàng
-    if (!dropped && seg.toId === plan.target && t > 0.99) {
-      dropped = true; state.cargo = false; state.status = 'arrived';
-      logEvent(`✅ Đã tới ${plan.target} — thả hàng (IR: hết hàng)`);
-    }
-    pushState();
-    if (dist >= total) {
-      clearInterval(simTimer);
-      state.status = 'idle'; state.node = null; state.cargo = true;
-      logEvent('🏠 Về HOME — sẵn sàng đơn kế tiếp');
-      pushState();
-    }
-  }, dt * 1000);
 }
 
 function manual(cmd) {
   if (carSocket && carSocket.readyState === 1) {
     carSocket.send(JSON.stringify(cmd));
   }
-  if (cmd.cmd === 'stop') { clearInterval(simTimer); state.status = 'idle'; pushState(); logEvent('■ DỪNG'); }
+  if (cmd.cmd === 'stop') { state.status = 'idle'; pushState(); logEvent('■ DỪNG'); }
 }
 
 // ---- Xử lý kết nối WebSocket ----
@@ -208,7 +158,7 @@ function onConnection(ws) {
   ws.on('close', () => {
     clients.delete(ws);
     if (ws === carSocket) {
-      carSocket = null; state.source = cfg.SIMULATOR ? 'sim' : 'none';
+      carSocket = null; state.source = 'none';
       logEvent('🚗 ESP32 ngắt kết nối');
     }
   });
@@ -231,6 +181,11 @@ async function boot() {
   wss = new WebSocketServer({ server });
   wss.on('connection', onConnection);
 
+  // WS THƯỜNG (không TLS) dành riêng cho xe ESP32 — LAN tin cậy, ESP32 khó
+  // bắt tay cert tự ký. Cùng bộ xử lý onConnection (xe tự khai role:'car').
+  const wssCar = new WebSocketServer({ port: cfg.PORT + 2 });
+  wssCar.on('connection', onConnection);
+
   // HTTP → HTTPS redirect (mở http://... tự nhảy sang https://...)
   http.createServer((req, res) => {
     const host = (req.headers.host || '').replace(/:\d+$/, '');
@@ -243,8 +198,7 @@ async function boot() {
     for (const ip of ips)
       console.log(`  📱 Điện thoại (cùng WiFi):   https://${ip}:${cfg.PORT}   ← mở để quét QR`);
     console.log(`     (gõ http:// cũng được, tự nhảy sang https. Bấm "Vẫn truy cập" khi cảnh báo cert tự ký.)`);
-    console.log(`  🚗 ESP32 kết nối WebSocket:  wss://<IP-máy-này>:${cfg.PORT}  (gửi {"role":"car"})`);
-    console.log(`  🧪 Giả lập xe: ${cfg.SIMULATOR ? 'BẬT' : 'tắt'}\n`);
+    console.log(`  🚗 ESP32 kết nối WebSocket:  ws://<IP-máy-này>:${cfg.PORT + 2}  (gửi {"role":"car"})\n`);
   });
 }
 boot();

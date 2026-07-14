@@ -36,11 +36,7 @@
     <div id="qrResult" class="qr-result">Chưa quét.</div>
 
     <h2>🎮 Điều khiển</h2>
-    <div class="row">
-      <button class="btn b-go" onclick="go('D0')">Giao D0</button>
-      <button class="btn b-go" onclick="go('D1')">Giao D1</button>
-      <button class="btn b-go" onclick="go('D2')">Giao D2</button>
-    </div>
+    <div class="row" id="goButtons" style="flex-wrap:wrap"></div>
     <div class="row">
       <button class="btn b-home" onclick="cmd({cmd:'home'})">🏠 Về HOME</button>
       <button class="btn b-stop" onclick="cmd({cmd:'stop'})">■ DỪNG</button>

@@ -14,10 +14,18 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <WebSocketsClient.h>
+#include <ArduinoJson.h>
 
 // ===================== WiFi (STA - noi WiFi nha) =====================
 // SUA ten/mat khau WiFi nha ban o day:
-wed
+#define WIFI_SSID "TEN_WIFI"       // <-- SUA ten WiFi
+#define WIFI_PASS "MAT_KHAU_WIFI"  // <-- SUA mat khau WiFi
+
+// Hub (server Node) - IP may chay server + cong WS THUONG cho xe (= PORT+2 = 3002)
+#define HUB_HOST "192.168.1.164"   // <-- SUA IP may chay server.js
+#define HUB_PORT 3002
+
 WebServer server(80);
 bool wifiOK = false;
 Preferences prefs;
@@ -116,6 +124,22 @@ int   TURN_MIN = 110;             // PWM toi thieu de thang ma sat khi quay
 int   TURN_MAX = 255;             // PWM toi da khi quay (full PWM de du luc pha ma sat khi chinh)
 bool  turnVerbose = false;        // true = xuat trace step-response (cho autotune)
 bool  INVERT_TURN = false;        // dao chieu actuation vong re (sua bang serial: TI)
+
+// --- Dieu phoi: WebSocket client toi hub + bo thuc thi route ---
+WebSocketsClient wsClient;
+bool   hubOK = false;             // dang ket noi hub?
+String route[48];                 // chuoi buoc F/L/R/B/DROP/HOME
+int    routeN = 0, routeIdx = 0;  // so buoc + buoc dang chay
+String routeTarget = "";          // ma o dang giao (C1..C9), "" = khong
+bool   running = false;           // dang chay 1 don giao?
+int    stepPhase = 0;             // 0 = re/khoi dong doan, 1 = dang tien
+float  segStartX = 0, segStartY = 0;  // moc odometry dau doan
+bool   leftStart = false;         // da roi giao diem xuat phat cua doan chua
+bool   cargo = true;              // con hang tren xe?
+int    lineCount = 0;             // so mat thay den o lan doc gan nhat
+const float MIN_EDGE = 120;       // mm toi thieu 1 doan truoc khi cho ket thuc
+const float MAX_EDGE = 750;       // mm toi da 1 doan (chan runaway neu miss giao diem)
+const int   INTERSECT_N = 5;      // >= so mat thay den => coi la giao diem (nga tu)
 
 // ===================== Encoder ISR (quadrature) =====================
 void IRAM_ATTR isrEncL() {
@@ -224,6 +248,7 @@ bool computeLineError() {
     int th = lineCalibrated ? lineThresh[i] : LINE_THRESHOLD;
     if (lineRaw[i] < th) { sum += W[i]; cnt++; }   // mat thay vach den
   }
+  lineCount = cnt;
   if (cnt == 0) { lineLost = true; return false; } // mat line
   lineLost = false;
   lineError = sum / cnt;                            // vi tri trung binh cua line
@@ -327,7 +352,8 @@ void buzzerTone(int freq, int ms) {
 }
 void beep(int ms) { buzzerTone(2000, ms); }
 
-// ===================== Cali d
+// ===================== Cali line =====================
+void saveCalibration();   // dinh nghia o duoi (NVS) - forward declare
 // Quy trinh: dem nguoc 5s (tick) -> tone bat dau -> quet thanh cam bien
 // qua vach den va nen trang trong 5s -> tone ket thuc -> tinh nguong rieng.
 void calibrateLine() {
@@ -574,6 +600,126 @@ void handleStatus() {
   server.send(200, "application/json", buf);
 }
 
+// ===================== DIEU PHOI: route tu hub =====================
+// Gui trang thai xe ve hub (khop {status,node,pos,cargo} ma server.js cho).
+// Frame odometry TRUNG frame map (HOME=(0,0), nhin +x=0deg) nen gui thang pose.
+void sendTelemetry() {
+  if (!hubOK) return;
+  const char* st = running ? (cargo ? "moving" : "arrived") : "idle";
+  char node[16];
+  if (routeTarget.length()) snprintf(node, sizeof(node), "\"%s\"", routeTarget.c_str());
+  else strcpy(node, "null");
+  char buf[176];
+  snprintf(buf, sizeof(buf),
+    "{\"status\":\"%s\",\"node\":%s,\"pos\":{\"x\":%.0f,\"y\":%.0f,\"th\":%.0f},\"cargo\":%s}",
+    st, node, poseX, poseY, poseTheta * 180.0f / PI, cargo ? "true" : "false");
+  wsClient.sendTXT(buf);
+}
+
+// Lai tay F/B/L/R (huy route dang chay). 'S'/khac = dung.
+void doManual(const String& dir) {
+  running = false; lineFollow = false; routeTarget = "";
+  char d = dir.length() ? dir.charAt(0) : 'S';
+  int s = motorSpeed;
+  if      (d == 'F') { setMotorA(+1, s); setMotorB(+1, s); }
+  else if (d == 'B') { setMotorA(-1, s); setMotorB(-1, s); }
+  else if (d == 'L') { setMotorA(-1, s); setMotorB(+1, s); }
+  else if (d == 'R') { setMotorA(+1, s); setMotorB(-1, s); }
+  else stopMotors();
+}
+
+// Tha hang: dung -> ha servo -> beep -> ve goc giu.
+void doDrop() {
+  stopMotors();
+  servo.write(SERVO_DROP);
+  cargo = false;
+  beep(120);
+  delay(400);                 // cho co cau tha xong
+  servo.write(SERVO_HOLD);
+  sendTelemetry();
+}
+
+// Ket thuc don (da ve HOME): dung, san sang don ke tiep.
+void finishRoute() {
+  stopMotors(); lineFollow = false;
+  running = false; stepPhase = 0;
+  routeTarget = ""; cargo = true;
+  Serial.println("[route] xong -> ve HOME, san sang");
+  sendTelemetry();
+}
+
+// Nap chuoi buoc tu hub va bat dau. Re-anchor odometry tai HOME.
+void startRoute(JsonArrayConst steps, const char* target) {
+  routeN = 0;
+  for (JsonVariantConst v : steps) if (routeN < 48) route[routeN++] = String(v.as<const char*>());
+  routeIdx = 0; stepPhase = 0; leftStart = false;
+  routeTarget = target ? target : "";
+  cargo = true;
+  resetOdometry();            // xe dang o HOME -> xoa troi tich luy
+  running = true;
+  Serial.printf("[route] bat dau -> %s (%d buoc)\n", routeTarget.c_str(), routeN);
+}
+
+// Chay 1 nhip cua route (goi trong loop khi running).
+// Moi buoc F/L/R/B = RE truoc (0/+90/-90/180) roi TIEN 1 canh toi giao diem/het line.
+void routeStep() {
+  if (routeIdx >= routeN) { finishRoute(); return; }
+  String s = route[routeIdx];
+
+  if (s == "DROP") { doDrop(); routeIdx++; return; }
+  if (s == "HOME") { routeIdx++; return; }   // buoc cuoi -> finishRoute o nhip sau
+
+  if (stepPhase == 0) {                       // --- Pha 0: re dau doan ---
+    float deg = 0;
+    if      (s == "L") deg = 90;
+    else if (s == "R") deg = -90;
+    else if (s == "B") deg = 180;
+    if (deg != 0) turnRelative(deg);          // rE tai cho (PID, blocking)
+    segStartX = poseX; segStartY = poseY; leftStart = false;
+    lastError = 0; errIntegral = 0;
+    stepPhase = 1;
+    return;
+  }
+
+  // --- Pha 1: tien bam line den giao diem ke (hoac het line = tam o) ---
+  lineFollowStep();
+  float trav = hypotf(poseX - segStartX, poseY - segStartY);
+  if (!leftStart && lineCount <= 2 && !lineLost) leftStart = true;   // da roi nga tu cu
+  bool done = false;
+  if (trav > MIN_EDGE) {
+    if (leftStart && (lineCount >= INTERSECT_N || lineLost)) done = true;  // toi nga tu / het line
+    if (trav > MAX_EDGE) done = true;                                       // an toan
+  }
+  if (done) { stopMotors(); stepPhase = 0; routeIdx++; }
+}
+
+// Su kien WebSocket toi hub.
+void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
+  switch (type) {
+    case WStype_CONNECTED:
+      hubOK = true;
+      wsClient.sendTXT("{\"role\":\"car\"}");
+      Serial.println("[ws] Da ket noi hub, khai bao role=car");
+      break;
+    case WStype_DISCONNECTED:
+      hubOK = false;
+      Serial.println("[ws] Mat ket noi hub");
+      break;
+    case WStype_TEXT: {
+      JsonDocument doc;
+      if (deserializeJson(doc, payload, len)) return;   // loi parse -> bo
+      const char* cmd = doc["cmd"];
+      if (!cmd) return;                                 // hello/khac -> bo qua
+      if      (!strcmp(cmd, "route"))  startRoute(doc["steps"].as<JsonArrayConst>(), doc["target"] | "");
+      else if (!strcmp(cmd, "stop"))   { running = false; lineFollow = false; stopMotors(); routeTarget = ""; Serial.println("[ws] STOP"); }
+      else if (!strcmp(cmd, "manual")) doManual(String((const char*)(doc["dir"] | "S")));
+      else if (!strcmp(cmd, "drop"))   doDrop();
+      break;
+    }
+    default: break;
+  }
+}
+
 void setupWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
@@ -630,7 +776,15 @@ void setup() {
   loadCalibration();   // nap calibration tu NVS (neu co)
   setupWiFi();         // ket noi WiFi + bat web server
 
-  Serial.println(F("\n>> Firmware TEST / HIEU CHUAN san sang"));
+  // WebSocket client toi hub (chi khi da co WiFi)
+  if (wifiOK) {
+    wsClient.begin(HUB_HOST, HUB_PORT, "/");
+    wsClient.onEvent(onWsEvent);
+    wsClient.setReconnectInterval(3000);
+    Serial.printf(">> Ket noi hub  ws://%s:%d\n", HUB_HOST, HUB_PORT);
+  }
+
+  Serial.println(F("\n>> Firmware san sang (dieu phoi route tu hub)"));
   printMenu();
 }
 
@@ -643,18 +797,25 @@ void loop() {
     handleCommand(line);
   }
 
-  // Web server
-  if (wifiOK) server.handleClient();
+  // Web server + WebSocket client toi hub
+  if (wifiOK) { server.handleClient(); wsClient.loop(); }
 
   // Odometry: cap nhat lien tuc
   updateOdometry();
 
-  // Vong bam line PID (~ moi 10ms)
+  // Dieu phoi: chay route tu hub; neu khong, cho phep bam line thu cong (menu 'g')
   static unsigned long lastPid = 0;
-  if (lineFollow && millis() - lastPid >= 10) {
+  if (running) {
+    if (stepPhase == 0) routeStep();                                    // buoc re (blocking) chay ngay
+    else if (millis() - lastPid >= 10) { lastPid = millis(); routeStep(); }  // tien PID ~10ms
+  } else if (lineFollow && millis() - lastPid >= 10) {
     lastPid = millis();
     lineFollowStep();
   }
+
+  // Gui telemetry ve hub moi 200ms
+  static unsigned long lastTel = 0;
+  if (hubOK && millis() - lastTel >= 200) { lastTel = millis(); sendTelemetry(); }
 
   // Stream 8 mat do line moi 200ms
   static unsigned long lastLine = 0;

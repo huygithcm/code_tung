@@ -36,11 +36,32 @@ function cmd(o)   { if (o.cmd === 'home') ROUTE = null; send(o); }
 function manual(dir) { send(dir === 'S' ? { cmd: 'stop' } : { cmd: 'manual', dir }); }
 
 // ---------- Tải hình học map rồi vẽ ----------
-fetch('/map').then(r => r.json()).then(m => { MAP = m; draw(); });
+fetch('/map').then(r => r.json()).then(m => { MAP = m; buildGoButtons(); draw(); });
+
+// Sinh nút "Giao Cx" động từ danh sách điểm của map (trừ HOME)
+function buildGoButtons() {
+  const box = document.getElementById('goButtons');
+  if (!box || !MAP) return;
+  box.innerHTML = '';
+  for (const id in MAP.points) {
+    if (id === 'HOME') continue;
+    const b = document.createElement('button');
+    b.className = 'btn b-go'; b.textContent = 'Giao ' + id;
+    b.onclick = () => go(id);
+    box.appendChild(b);
+  }
+}
 
 function bounds() {
-  // khổ map cố định để luôn thấy đủ
-  return { minx: -400, maxx: 400, miny: -120, maxy: 980 };
+  // khổ map tự tính từ dữ liệu (cột/hàng/điểm/nhánh) + lề, để luôn thấy đủ
+  if (!MAP) return { minx: -400, maxx: 400, miny: -120, maxy: 980 };
+  const xs = [], ys = [], push = (x, y) => { xs.push(x); ys.push(y); };
+  MAP.cols.forEach(x => MAP.rows.forEach(y => push(x, y)));
+  for (const id in MAP.points) { const p = MAP.points[id]; push(p.x, p.y); }
+  (MAP.stubs || []).forEach(s => { push(s.a[0], s.a[1]); push(s.b[0], s.b[1]); });
+  const m = 60;
+  return { minx: Math.min(...xs) - m, maxx: Math.max(...xs) + m,
+           miny: Math.min(...ys) - m, maxy: Math.max(...ys) + m };
 }
 function draw() {
   const W = cv.width, H = cv.height, pad = 36;
@@ -89,7 +110,7 @@ function draw() {
   ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px + 30 * Math.cos(th), py - 30 * Math.sin(th)); ctx.stroke();
 
   ctx.fillStyle = '#888'; ctx.font = '12px monospace';
-  ctx.fillText('ô 240mm | 🟠 điểm giao  🟢 HOME  🔵/🟣 xe(còn/hết hàng)', pad, 16);
+  ctx.fillText('ô 500×475mm | 🟠 điểm giao  🟢 HOME  🔵/🟣 xe(còn/hết hàng)', pad, 16);
 }
 function line(cx, cy, x1, y1, x2, y2) { ctx.beginPath(); ctx.moveTo(cx({ x: x1, y: y1 }), cy({ x: x1, y: y1 })); ctx.lineTo(cx({ x: x2, y: y2 }), cy({ x: x2, y: y2 })); ctx.stroke(); }
 function dot(cx, cy, x, y, r) { ctx.beginPath(); ctx.arc(cx({ x, y }), cy({ x, y }), r, 0, 7); ctx.fill(); }
@@ -99,7 +120,7 @@ function renderStatus() {
   const s = st;
   document.getElementById('status').innerHTML =
     `trạng thái: <b class="k">${(s.status || '').toUpperCase()}</b>  ` +
-    `nguồn: ${s.source === 'car' ? '🚗 xe thật' : '🧪 giả lập'}<br>` +
+    `nguồn: ${s.source === 'car' ? '🚗 xe thật' : '⚠️ chưa có xe'}<br>` +
     `điểm đến: <b class="k">${s.node || '—'}</b>  hàng: ${s.cargo ? '📦 còn' : '✅ đã thả'}<br>` +
     `x=${s.pos.x.toFixed(0)} mm  y=${s.pos.y.toFixed(0)} mm  θ=${(s.pos.th || 0).toFixed(0)}°`;
 }

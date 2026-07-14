@@ -32,19 +32,18 @@ Khi khởi động, console in sẵn URL kèm IP LAN.
 
 | Khu vực | Mô tả |
 |---|---|
-| 🗺️ Bản đồ | Lưới 3×3 (mm), 3 điểm giao tâm ô + HOME, vẽ đường định tuyến + xe thời gian thực |
+| 🗺️ Bản đồ | Lưới 3×3 (mm), 9 điểm giao tâm ô C1..C9 + HOME (cạnh trái), vẽ đường định tuyến + xe thời gian thực |
 | 📷 Quét QR | `html5-qrcode` qua camera ĐT → tra `config.QR_MAP` → tự điều phối giao |
-| 🎮 Điều khiển | Giao D0/D1/D2, Về HOME, DỪNG, lái tay F/B/L/R |
+| 🎮 Điều khiển | Giao C1..C9 (bất cứ ô nào), Về HOME, DỪNG, lái tay F/B/L/R |
 | 📜 Nhật ký | Log sự kiện giao hàng + trạng thái IR (còn/hết hàng) |
-| 🧪 Giả lập | Khi chưa có ESP32, server tự mô phỏng xe chạy để test web độc lập |
 | 🛠️ Admin | `/admin.html` thêm/sửa/xóa hàng (mã QR → điểm giao), lưu bền `goods.json` |
 
 ## File
 
-- `server.js` — hub WebSocket + điều phối + giả lập xe
+- `server.js` — hub WebSocket + điều phối
 - `map.js` — hình học lưới + Dijkstra + sinh lệnh tương đối `F/L/R/DROP/HOME` (GĐ E)
 - `store.js` — danh mục hàng (mã QR→điểm giao), lưu bền `goods.json`
-- `config.js` — góc servo, bật/tắt giả lập, seed danh mục hàng lần đầu
+- `config.js` — góc servo, seed danh mục hàng lần đầu
 - `public/` — `index.html` + `app.js` (điều khiển/giám sát), `admin.html` + `admin.js` (quản lý hàng), `style.css`
 
 ## Giao thức WebSocket
@@ -52,20 +51,20 @@ Khi khởi động, console in sẵn URL kèm IP LAN.
 **Web → server**
 ```json
 {"cmd":"qr","value":"A"}       // quét QR → tra điểm giao
-{"cmd":"go","node":"D1"}       // chọn điểm thủ công
+{"cmd":"go","node":"C5"}       // chọn điểm thủ công
 {"cmd":"home"} | {"cmd":"stop"} | {"cmd":"manual","dir":"F"}
 ```
 
 **Server → ESP32** (xe thật)
 ```json
-{"cmd":"route","target":"D1","steps":["F","L","R","DROP","HOME", ...]}
+{"cmd":"route","target":"C5","steps":["F","L","R","DROP","HOME", ...]}
 {"cmd":"stop"} | {"cmd":"manual","dir":"F"}
 ```
 
 **ESP32 → server** (khai báo + trạng thái)
 ```json
 {"role":"car"}
-{"status":"moving","node":"D1","pos":{"x":..,"y":..,"th":..},"cargo":true}
+{"status":"moving","node":"C5","pos":{"x":..,"y":..,"th":..},"cargo":true}
 ```
 
 **Server → web**: `{"type":"state",...}`, `{"type":"route",...}`, `{"type":"log",...}`

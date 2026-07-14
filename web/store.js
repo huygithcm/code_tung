@@ -1,6 +1,6 @@
 // ============================================================================
 // store.js — Danh mục hàng (mã QR → điểm giao), lưu bền vào goods.json.
-// Mỗi mục: { code, name, node }  (code = nội dung QR; node = D0/D1/D2)
+// Mỗi mục: { code, name, node }  (code = nội dung QR; node = C1..C9 = 9 ô)
 // ============================================================================
 
 const fs = require('fs');
