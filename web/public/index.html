@@ -78,6 +78,15 @@
       <span class="hint" style="align-self:center">+trái / −phải · xem kết quả ở Log xe</span>
     </div>
 
+    <h3>Hiệu chuẩn quãng đường</h3>
+    <div class="tune">
+      <label>biết(mm)<input id="t-known" type="number" step="5" value="475"></label>
+      <button class="btn b-go" onclick="calDist()">📏 Chạy đo 1 cạnh</button>
+      <label>WHEEL_Ø(mm)<input id="t-wheeld" type="number" step="0.1" value="70"></label>
+      <button class="btn b-go" onclick="applyWheel()">Ghi Ø</button>
+      <span class="hint" style="align-self:center">Đặt xe tại giao điểm, hướng theo line → đo tới giao điểm kế; xem gợi ý Ø ở Log xe</span>
+    </div>
+
     <h2>📜 Nhật ký giao hàng</h2>
     <ul id="log" class="log"></ul>
 

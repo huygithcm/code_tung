@@ -182,6 +182,12 @@ function onConnection(ws) {
       case 'enc':                                       // đọc encoder (hiệu chuẩn chiều đếm)
         if (carSocket && carSocket.readyState === 1) carSocket.send(JSON.stringify(m));
         break;
+      case 'caldist':                                   // hiệu chuẩn quãng đường (1 cạnh line)
+        if (carSocket && carSocket.readyState === 1) {
+          carSocket.send(JSON.stringify(m));
+          logEvent(`📏 Hiệu chuẩn quãng đường (biết ${m.known || 475}mm)`);
+        } else logEvent('⚠️ Chưa có xe để hiệu chuẩn quãng đường');
+        break;
     }
   });
 

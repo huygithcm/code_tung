@@ -757,6 +757,39 @@ void routeStep() {
   if (done) { stopMotors(); stepPhase = 0; routeIdx++; }
 }
 
+// ===================== Hieu chuan quang duong =====================
+// Chay thang bam line tu giao diem hien tai -> giao diem ke (biet knownMM, mac dinh 475).
+// Do quang duong odometry (trung binh 2 banh) roi goi y WHEEL_DIAMETER da hieu chuan.
+void calibDistance(float knownMM) {
+  running = false; lineFollow = false;
+  resetOdometry();
+  leftStart = false;
+  hubLog("[caldist] Chay thang toi giao diem ke (biet " + String(knownMM, 0) + "mm)...");
+
+  unsigned long t0 = millis();
+  auto travel = []() { return (fabs(pulsesToMM(encL)) + fabs(pulsesToMM(encR))) * 0.5f; };  // mm trung binh 2 banh
+  while (millis() - t0 < 8000) {                 // timeout 8s
+    updateOdometry();
+    lineFollowStep();                            // bam line 1 nhip
+    float trav = travel();
+    if (!leftStart && lineCount <= 2 && !lineLost) leftStart = true;   // da roi giao diem xuat phat
+    if (trav > MIN_EDGE) {
+      if (leftStart && (lineCount >= INTERSECT_N || lineLost)) break;  // toi giao diem ke
+      if (trav > MAX_EDGE) break;                                      // an toan
+    }
+    delay(5);
+  }
+  stopMotors();
+
+  float measured = travel();
+  float suggest  = (measured > 1) ? WHEEL_DIAMETER_MM * knownMM / measured : WHEEL_DIAMETER_MM;
+  char buf[176];
+  snprintf(buf, sizeof(buf),
+    "[caldist] biet=%.0fmm do=%.1fmm (encL=%ld encR=%ld) | WHEEL_DIAMETER hien=%.2f -> goi y=%.2fmm",
+    knownMM, measured, encL, encR, WHEEL_DIAMETER_MM, suggest);
+  hubLog(buf);
+}
+
 // Su kien WebSocket toi hub.
 void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
   switch (type) {
@@ -790,11 +823,16 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         if (!doc["kpt"].isNull())      KpT = (float)doc["kpt"];
         if (!doc["kdt"].isNull())      KdT = (float)doc["kdt"];
         if (!doc["turntol"].isNull())  TURN_TOL_DEG = (float)doc["turntol"];
+        if (!doc["wheeld"].isNull())   WHEEL_DIAMETER_MM = (float)doc["wheeld"];
+        if (!doc["ppr"].isNull())      ENCODER_PPR = (int)doc["ppr"];
+        if (!doc["wbase"].isNull())    WHEEL_BASE_MM = (float)doc["wbase"];
         hubLog("[tune] base=" + String(baseSpeed) + " min=" + String(MOTOR_MIN_PWM) +
                " kp=" + String(Kp, 1) + " kd=" + String(Kd, 1) +
                " turnmin=" + String(TURN_MIN) + " turnmax=" + String(TURN_MAX) +
                " kpt=" + String(KpT, 1) + " kdt=" + String(KdT, 1) +
-               " tol=" + String(TURN_TOL_DEG, 1) + " speed=" + String(motorSpeed));
+               " tol=" + String(TURN_TOL_DEG, 1) + " speed=" + String(motorSpeed) +
+               " wheeld=" + String(WHEEL_DIAMETER_MM, 2) + " ppr=" + String(ENCODER_PPR) +
+               " wbase=" + String(WHEEL_BASE_MM, 1));
       }
       else if (!strcmp(cmd, "turn")) {                  // test 1 cu re (deg): +trai / -phai
         float deg = doc["deg"] | 90.0;
@@ -806,6 +844,9 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         hubLog("[enc] L=" + String(encL) + " R=" + String(encR) +
                " x=" + String(poseX, 0) + " y=" + String(poseY, 0) +
                " th=" + String(poseTheta * 180.0f / PI, 1));
+      }
+      else if (!strcmp(cmd, "caldist")) {               // hieu chuan quang duong (1 canh line)
+        calibDistance(doc["known"] | 475.0);
       }
       break;
     }
