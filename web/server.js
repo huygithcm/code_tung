@@ -119,6 +119,14 @@ function runSimulator(plan) {
     const len = Math.hypot(b.x - a.x, b.y - a.y);
     segs.push({ a, b, len, acc: total, toId: b.id }); total += len;
   }
+  // Đã ở sẵn đích/HOME (không có đoạn đường nào) → dừng an toàn, khỏi chạy interval.
+  if (!segs.length || total === 0) {
+    simTimer = null;
+    state.status = 'idle'; state.node = null; state.cargo = true;
+    logEvent(`🏠 Đã ở ${plan.target} — không cần di chuyển`);
+    pushState();
+    return;
+  }
   let dist = 0, dropped = false;
   state.status = 'moving'; state.node = plan.target; state.cargo = true; pushState();
   const dt = 0.05; // 20 Hz
