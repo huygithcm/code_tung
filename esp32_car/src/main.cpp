@@ -17,6 +17,7 @@
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
+#include <Wire.h>
 
 // ===================== WiFi (STA - noi WiFi nha) =====================
 // SUA ten/mat khau WiFi nha ban o day:
@@ -39,6 +40,7 @@ String cfgHub  = HUB_HOST;    // IP laptop chay server.js
 // Forward declaration (dinh nghia o cuoi file, dung trong handleCommand)
 void setupWiFi();
 void startHub();
+void startOTA();
 void saveNetConfig();
 void hubLog(const String& s);   // in Serial + day log len hub (web doc duoc)
 
@@ -80,7 +82,12 @@ void hubLog(const String& s);   // in Serial + day log len hub (web doc duoc)
 #define MUX_S0  27
 #define MUX_S1  26
 #define MUX_S2  25
-#define MUX_S3  33
+// MUX_S3: chi dung 8 kenh (CH0..CH7) -> S3 luon = 0 -> NOI THANG XUONG GND tren board.
+// Nho vay GPIO33 duoc giai phong lam SCL cho MPU6050.
+// MPU6050 (I2C) - do gyro Z de hop nhat voi odometry (chinh xac hon khi banh truot)
+#define MPU_SDA  32
+#define MPU_SCL  33
+#define MPU_ADDR 0x68
 #define LINE_THRESHOLD 2000   // nguong den/trang (analog 0..4095)
 // Mat cam bien con tot (false = bo qua). C1 hong -> mask.
 bool SENSOR_OK[8] = { false, true, true, true, true, true, true, true };
@@ -171,7 +178,7 @@ int readMuxChannel(int ch) {
   digitalWrite(MUX_S0, ch & 0x01);
   digitalWrite(MUX_S1, (ch >> 1) & 0x01);
   digitalWrite(MUX_S2, (ch >> 2) & 0x01);
-  digitalWrite(MUX_S3, (ch >> 3) & 0x01);
+  // S3 da noi GND (chi doc CH0..CH7) -> khong can dieu khien
   delayMicroseconds(60);          // cho MUX + ADC on dinh (giam crosstalk)
   analogRead(MUX_SIG);            // mau bo (xa dien tich kenh truoc)
   long sum = 0;
@@ -225,20 +232,82 @@ void stopMotors() { setMotorA(0, 0); setMotorB(0, 0); }
 void driveA(int v) { v = constrain(v, -255, 255); setMotorA(v > 0 ? 1 : (v < 0 ? -1 : 0), abs(v)); }
 void driveB(int v) { v = constrain(v, -255, 255); setMotorB(v > 0 ? 1 : (v < 0 ? -1 : 0), abs(v)); }
 
+// ===================== MPU6050 (gyro Z) =====================
+// Encoder bi truot banh khi quay -> goc sai. Gyro do truc tiep van toc goc,
+// hop nhat 2 nguon (complementary) cho poseTheta chinh xac hon.
+bool  mpuOK = false;              // tim thay MPU6050?
+float gyroBiasZ = 0;              // troi tinh (LSB) - do khi xe dung yen
+float GYRO_W = 0.98;              // trong so tin GYRO khi hop nhat (0=chi encoder, 1=chi gyro)
+int   GYRO_SIGN = 1;              // dao dau neu module gan nguoc chieu
+float gyroDelta = 0;              // goc gyro tich luy (rad), odometry se tieu thu
+unsigned long lastGyroUs = 0;
+const float GYRO_LSB_PER_DPS = 131.0f;   // thang do +-250 do/s
+
+void mpuWrite(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(MPU_ADDR); Wire.write(reg); Wire.write(val); Wire.endTransmission();
+}
+int16_t mpuGyroZraw() {
+  Wire.beginTransmission(MPU_ADDR); Wire.write(0x47);        // GYRO_ZOUT_H
+  if (Wire.endTransmission(false) != 0) return 0;
+  if (Wire.requestFrom((uint8_t)MPU_ADDR, (uint8_t)2) != 2) return 0;
+  return (int16_t)((Wire.read() << 8) | Wire.read());
+}
+// Do troi tinh gyro - XE PHAI DUNG YEN khi goi
+void gyroCalibrate(int n = 500) {
+  if (!mpuOK) { hubLog("[gyro] chua co MPU6050"); return; }
+  double sum = 0;
+  for (int i = 0; i < n; i++) { sum += mpuGyroZraw(); delay(2); }
+  gyroBiasZ = (float)(sum / n);
+  gyroDelta = 0; lastGyroUs = micros();
+  hubLog("[gyro] bias Z = " + String(gyroBiasZ, 1) + " LSB (" +
+         String(gyroBiasZ / GYRO_LSB_PER_DPS, 2) + " do/s)");
+}
+void mpuInit() {
+  Wire.begin(MPU_SDA, MPU_SCL, 400000);
+  Wire.beginTransmission(MPU_ADDR); Wire.write(0x75);        // WHO_AM_I
+  uint8_t who = 0;
+  if (Wire.endTransmission(false) == 0 && Wire.requestFrom((uint8_t)MPU_ADDR, (uint8_t)1) == 1)
+    who = Wire.read();
+  mpuOK = (who != 0x00 && who != 0xFF);
+  if (!mpuOK) { Serial.printf(">> MPU6050 KHONG THAY (SDA=%d SCL=%d) - dung encoder don thuan\n", MPU_SDA, MPU_SCL); return; }
+  mpuWrite(0x6B, 0x80); delay(100);        // reset
+  mpuWrite(0x6B, 0x01); delay(10);         // wake, clock = gyro X (on dinh hon)
+  mpuWrite(0x1A, 0x03);                    // DLPF ~44Hz (loc rung motor)
+  mpuWrite(0x1B, 0x00);                    // gyro +-250 do/s
+  delay(50);
+  Serial.printf(">> MPU6050 OK (WHO_AM_I=0x%02X, SDA=%d SCL=%d)\n", who, MPU_SDA, MPU_SCL);
+  lastGyroUs = micros();
+}
+// Lay mau gyro va cong don goc. Tu gioi han ~250Hz.
+void updateGyro() {
+  if (!mpuOK) return;
+  unsigned long now = micros();
+  float dt = (now - lastGyroUs) * 1e-6f;
+  if (dt < 0.004f) return;                 // toi da ~250Hz
+  lastGyroUs = now;
+  if (dt > 0.2f) return;                   // nhip qua dai -> bo (tranh nhay goc)
+  float dps = (mpuGyroZraw() - gyroBiasZ) / GYRO_LSB_PER_DPS;
+  gyroDelta += GYRO_SIGN * dps * dt * PI / 180.0f;   // rad
+}
+
 // ===================== Odometry =====================
-// Cap nhat toa do (x,y,theta) tu so xung encoder. Goi lien tuc trong loop.
+// Cap nhat toa do (x,y,theta): quang duong tu encoder, GOC hop nhat encoder + gyro.
 void updateOdometry() {
+  updateGyro();                                // lay mau gyro (tu gioi han nhip)
   long l = encL, r = encR;
   long dL = l - lastOdoL;
   long dR = r - lastOdoR;
   lastOdoL = l; lastOdoR = r;
-  if (dL == 0 && dR == 0) return;
+  float dThetaGyro = gyroDelta; gyroDelta = 0;  // tieu thu goc gyro da cong don
+  if (dL == 0 && dR == 0 && fabsf(dThetaGyro) < 1e-6f) return;
 
   float mmPerPulse = (PI * WHEEL_DIAMETER_MM) / ENCODER_PPR;
   float sL = dL * mmPerPulse;
   float sR = dR * mmPerPulse;
   float dS = (sL + sR) * 0.5f;                 // quang duong tam xe
-  float dTheta = (sR - sL) / WHEEL_BASE_MM;    // thay doi huong (rad)
+  float dThetaEnc = (sR - sL) / WHEEL_BASE_MM; // goc theo encoder (sai khi truot banh)
+  // Hop nhat: tin gyro nhieu hon (khong bi truot), encoder chong troi dai han
+  float dTheta = mpuOK ? (GYRO_W * dThetaGyro + (1.0f - GYRO_W) * dThetaEnc) : dThetaEnc;
 
   // tich phan vi tri (dung huong giua doan de chinh xac hon)
   poseX += dS * cosf(poseTheta + dTheta * 0.5f);
@@ -249,6 +318,7 @@ void updateOdometry() {
 void resetOdometry() {
   encL = 0; encR = 0; lastOdoL = 0; lastOdoR = 0;
   poseX = poseY = poseTheta = 0;
+  gyroDelta = 0; lastGyroUs = micros();   // bo goc gyro con ton dong
 }
 
 // In toa do hien tai
@@ -595,7 +665,7 @@ void handleCommand(String cmd) {
         saveNetConfig();
         Serial.println(F(">> Ket noi lai voi cau hinh moi..."));
         WiFi.disconnect(); wifiOK = false; hubOK = false;
-        setupWiFi(); startHub();
+        setupWiFi(); startHub(); startOTA();   // startOTA: neu thieu -> mat OTA khi boot WiFi FAIL roi noi lai
       }
       else Serial.println(F("Dung: Wn<ten> / Wp<mk> / Wh<ip> / Ws (luu+ket noi) / W (xem)"));
       break;
@@ -840,13 +910,17 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         if (!doc["ppr"].isNull())      ENCODER_PPR = (int)doc["ppr"];
         if (!doc["wbase"].isNull())    WHEEL_BASE_MM = (float)doc["wbase"];
         if (!doc["center"].isNull())   CENTER_OFFSET_MM = constrain((int)doc["center"], 0, 300);
+        if (!doc["gyrow"].isNull())    GYRO_W = constrain((float)doc["gyrow"], 0.0f, 1.0f);
+        if (!doc["gyrosign"].isNull()) GYRO_SIGN = ((int)doc["gyrosign"] >= 0) ? 1 : -1;
         hubLog("[tune] base=" + String(baseSpeed) + " min=" + String(MOTOR_MIN_PWM) +
                " kp=" + String(Kp, 1) + " kd=" + String(Kd, 1) +
                " turnmin=" + String(TURN_MIN) + " turnmax=" + String(TURN_MAX) +
                " kpt=" + String(KpT, 1) + " kdt=" + String(KdT, 1) +
                " tol=" + String(TURN_TOL_DEG, 1) + " speed=" + String(motorSpeed) +
                " wheeld=" + String(WHEEL_DIAMETER_MM, 2) + " ppr=" + String(ENCODER_PPR) +
-               " wbase=" + String(WHEEL_BASE_MM, 1) + " center=" + String(CENTER_OFFSET_MM));
+               " wbase=" + String(WHEEL_BASE_MM, 1) + " center=" + String(CENTER_OFFSET_MM) +
+               " gyro=" + String(mpuOK ? "OK" : "--") + " gyrow=" + String(GYRO_W, 2) +
+               " gyrosign=" + String(GYRO_SIGN));
       }
       else if (!strcmp(cmd, "turn")) {                  // test 1 cu re (deg): +trai / -phai
         float deg = doc["deg"] | 90.0;
@@ -857,10 +931,17 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         if (!doc["reset"].isNull()) resetOdometry();
         hubLog("[enc] L=" + String(encL) + " R=" + String(encR) +
                " x=" + String(poseX, 0) + " y=" + String(poseY, 0) +
-               " th=" + String(poseTheta * 180.0f / PI, 1));
+               " th=" + String(poseTheta * 180.0f / PI, 1) +
+               " | gyro=" + String(mpuOK ? "OK" : "--") +
+               (mpuOK ? (" wz=" + String((mpuGyroZraw() - gyroBiasZ) / GYRO_LSB_PER_DPS, 1) + "do/s") : ""));
       }
       else if (!strcmp(cmd, "caldist")) {               // hieu chuan quang duong (1 canh line)
         calibDistance(doc["known"] | 475.0);
+      }
+      else if (!strcmp(cmd, "gyrocal")) {               // do lai troi tinh gyro (xe phai dung yen)
+        stopMotors();
+        hubLog("[gyro] Do troi tinh - GIU XE DUNG YEN...");
+        gyroCalibrate();
       }
       break;
     }
@@ -943,9 +1024,8 @@ void setup() {
   // Buzzer
   pinMode(BUZZER, OUTPUT); digitalWrite(BUZZER, LOW);
 
-  // MUX 74HC4067
-  pinMode(MUX_S0, OUTPUT); pinMode(MUX_S1, OUTPUT);
-  pinMode(MUX_S2, OUTPUT); pinMode(MUX_S3, OUTPUT);
+  // MUX 74HC4067 (S3 noi GND tren board -> chi 3 chan chon kenh)
+  pinMode(MUX_S0, OUTPUT); pinMode(MUX_S1, OUTPUT); pinMode(MUX_S2, OUTPUT);
   analogReadResolution(12);   // 0..4095
 
   // Encoder pins (input-only 13/14/15/17 deu co pull-up noi)
@@ -958,6 +1038,9 @@ void setup() {
   servo.setPeriodHertz(50);
   servo.attach(SERVO_PIN, 500, 2400);
   servo.write(SERVO_HOLD);
+
+  mpuInit();           // I2C + MPU6050 (gyro Z ho tro odometry)
+  gyroCalibrate();     // do troi tinh - XE PHAI DUNG YEN luc khoi dong
 
   loadCalibration();   // nap calibration tu NVS (neu co)
   loadNetConfig();     // nap SSID / mat khau / IP hub tu NVS (neu co)

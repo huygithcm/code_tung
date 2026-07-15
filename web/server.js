@@ -188,6 +188,12 @@ function onConnection(ws) {
           logEvent(`📏 Hiệu chuẩn quãng đường (biết ${m.known || 475}mm)`);
         } else logEvent('⚠️ Chưa có xe để hiệu chuẩn quãng đường');
         break;
+      case 'gyrocal':                                   // đo trôi tĩnh gyro MPU6050
+        if (carSocket && carSocket.readyState === 1) {
+          carSocket.send(JSON.stringify(m));
+          logEvent('🎯 Đo trôi tĩnh gyro — giữ xe đứng yên');
+        } else logEvent('⚠️ Chưa có xe để đo gyro');
+        break;
     }
   });
 

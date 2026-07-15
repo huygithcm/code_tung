@@ -11,7 +11,12 @@
 | | S0 | 27 | — | bit chọn kênh |
 | | S1 | 26 | — | |
 | | S2 | 25 | — | |
-| | S3 | 33 | — | |
+| | S3 | **→ GND** | — | ⚠️ **nối thẳng GND** (chỉ dùng CH0–CH7 nên S3 luôn=0) → giải phóng GPIO33 |
+| **MPU6050 (GY-521)** | SDA | 32 | — | I2C, gyro Z hỗ trợ odometry |
+| | SCL | 33 | — | (chân cũ của MUX S3) |
+| | AD0 | → GND | — | địa chỉ 0x68 |
+| | VCC / GND | 3.3V / GND | — | module có sẵn trở treo 4.7k |
+| | INT | 35 *(tùy chọn)* | — | input-only — hiện **chưa dùng** |
 | **Motor A (bánh TRÁI)** | IN1 | 18 | — | |
 | | IN2 | 19 | — | |
 | | ENA (PWM) | 21 | 2 | 5 kHz, 8-bit |
@@ -41,16 +46,16 @@ Rẽ: vạch/đích bên PHẢI → xe xoay phải; bám line bẻ về phía v�
 
 Đọc tuần tự: set S0–S3 → chờ 10µs → `analogRead(36)`.
 
-| Nhãn | Kênh MUX | S3 S2 S1 S0 | Vị trí mắt |
+| Nhãn | Kênh MUX | S2 S1 S0 (S3=GND) | Vị trí mắt |
 |---|---|---|---|
-| C1 | CH0 | 0000 | ngoài cùng **TRÁI** |
-| C2 | CH1 | 0001 | |
-| C3 | CH2 | 0010 | |
-| C4 | CH3 | 0011 | giữa-trái |
-| C5 | CH4 | 0100 | giữa-phải |
-| C6 | CH5 | 0101 | |
-| C7 | CH6 | 0110 | |
-| C8 | CH7 | 0111 | ngoài cùng **PHẢI** |
+| C1 | CH0 | 000 | ngoài cùng **TRÁI** |
+| C2 | CH1 | 001 | |
+| C3 | CH2 | 010 | |
+| C4 | CH3 | 011 | giữa-trái |
+| C5 | CH4 | 100 | giữa-phải |
+| C6 | CH5 | 101 | |
+| C7 | CH6 | 110 | |
+| C8 | CH7 | 111 | ngoài cùng **PHẢI** |
 
 Trong code: C1→C8 = CH0→CH7 = `sensor[0..7]` (trái → phải).
 
@@ -77,15 +82,30 @@ Trong code: C1→C8 = CH0→CH7 = `sensor[0..7]` (trái → phải).
 |---|---|---|
 | `KpT` | **200** | dùng odometry làm phản hồi |
 | `KdT` | **35** | dập vọt lố |
-| `TURN_MIN` | **110** | PWM tối thiểu phá ma sát tĩnh |
+| `TURN_MIN` | **200** | ⚠️ PWM tối thiểu. **110/160 → xe kẹt ở ~45°**: khi err nhỏ dần, `KpT·err` tụt dưới ngưỡng khởi động → mất mô-men → timeout. 200 giữ lực tới sát đích |
 | `TURN_MAX` | **255** | full PWM — cần đủ lực để chỉnh khi gần đích (chặn thấp → kẹt) |
+
+Kết quả đo sau hiệu chuẩn: rẽ **+90° → 89.94°** (sai số 0.06°), **−90° → −90.34°**, ổn định ~1.2s.
 
 ### PID bám line (chiều đã đúng — giá trị cần tune khi chạy đường thật)
 | Biến | Giá trị | Trạng thái |
 |---|---|---|
 | `Kp` | 25 | ⬜ tune trên đường |
 | `Kd` | 15 | ⬜ tune trên đường |
-| `baseSpeed` | 160 | chỉnh sống trên web (slider/nút) |
+| `baseSpeed` | **200** | chỉnh sống trên web (panel ⚙️) |
+| `MOTOR_MIN_PWM` | **120** | sàn PWM — dưới ngưỡng này motor **kêu mà không quay** |
+| `CENTER_OFFSET_MM` | **70** | ⬜ đo thực tế = k/c **cảm biến → trục bánh**. Sau khi thấy ngã tư, bò thêm đoạn này để canh trục bánh vào tâm rồi mới rẽ (chống **rẽ sớm → mất line**) |
+
+### Gyro MPU6050 — hợp nhất odometry
+| Biến | Giá trị | Ghi chú |
+|---|---|---|
+| `GYRO_W` | **0.98** | trọng số tin gyro khi hợp nhất góc (0 = chỉ encoder, 1 = chỉ gyro) |
+| `GYRO_SIGN` | **+1** | đảo `-1` nếu module gắn ngược chiều |
+| `gyroBiasZ` | đo lúc boot | trôi tĩnh — **xe phải đứng yên khi khởi động**; đo lại bằng nút 🎯 trên web |
+
+Công thức hợp nhất mỗi nhịp:
+`Δθ = GYRO_W·Δθ_gyro + (1−GYRO_W)·Δθ_encoder` — gyro không bị trượt bánh, encoder chống trôi dài hạn.
+Nếu không thấy MPU6050 → tự động quay về **encoder đơn thuần** (không crash).
 
 ### Hằng số odometry suy ra
 ```
@@ -117,7 +137,18 @@ mm mỗi xung   = 219.9 / 370      ≈ 0.594 mm/xung
 > dọc từ trục 2 bánh dẫn động tới bánh tự do phía trước.
 
 ## 5. Chân còn trống
-GPIO 32 (ADC1), 35, 39 (input-only). Tránh 0, 2, 1(TX), 3(RX).
+
+Sau khi gắn MPU6050 (32=SDA, 33=SCL nhờ đưa MUX S3 xuống GND):
+
+| Chân | Trạng thái |
+|---|---|
+| 34 | trống — **input-only**, dành cho IR (check còn hàng) |
+| 35, 39 | trống — **input-only** (chỉ đọc được; 35 dự phòng cho MPU INT) |
+| 0, 2, 12 | ❌ **strapping — không dùng**. Đặc biệt **12**: bị kéo HIGH lúc boot → chọn nhầm flash 1.8V → **xe không boot** |
+| 1, 3 | ❌ UART0 (Serial monitor) |
+
+> Hết chân output-capable. Muốn thêm thiết bị I2C khác → **mắc song song** vào SDA=32/SCL=33
+> (khác địa chỉ là được), không cần chân mới.
 
 ## 6. Lưu ý phần cứng
 - L298N: **rút jumper ENA/ENB** để PWM điều tốc được.

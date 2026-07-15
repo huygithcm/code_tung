@@ -44,13 +44,14 @@ function applyTune() {
   const o = { cmd: 'tune' };
   const map = { base: 't-base', min: 't-min', kp: 't-kp', kd: 't-kd', speed: 't-speed',
                 turnmin: 't-turnmin', turnmax: 't-turnmax', kpt: 't-kpt', kdt: 't-kdt', turntol: 't-turntol',
-                center: 't-center' };
+                center: 't-center', gyrow: 't-gyrow', gyrosign: 't-gyrosign' };
   for (const k in map) { const el = document.getElementById(map[k]); if (!el) continue; const v = numVal(map[k]); if (v !== undefined) o[k] = v; }
   send(o);
 }
 function applyWheel() { const d = numVal('t-wheeld'); if (d !== undefined) send({ cmd: 'tune', wheeld: d }); }
 function testTurn() { const d = numVal('t-deg'); if (d !== undefined) send({ cmd: 'turn', deg: d }); }
 function calDist() { const k = numVal('t-known'); send({ cmd: 'caldist', known: k === undefined ? 475 : k }); }
+function gyroCal() { if (confirm('Giữ xe ĐỨNG YÊN trong ~1s để đo trôi tĩnh gyro. Bắt đầu?')) send({ cmd: 'gyrocal' }); }
 
 // ---------- Tải hình học map rồi vẽ ----------
 fetch('/map').then(r => r.json()).then(m => { MAP = m; buildGoButtons(); draw(); });
