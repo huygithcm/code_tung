@@ -22,7 +22,13 @@
   <section class="panel">
     <h2>🗺️ Bản đồ &amp; vị trí xe</h2>
     <canvas id="map" width="520" height="560"></canvas>
+    <label class="hint" style="display:block;margin-top:6px">
+      <input type="checkbox" id="dims" checked onchange="draw();drawCarDetail()"> 📐 Hiện kích thước (mm)
+    </label>
     <div id="status" class="status">Đang chờ dữ liệu…</div>
+
+    <h2>📐 Kích thước xe — kiểm tra giúp mình</h2>
+    <canvas id="carcv" width="520" height="330"></canvas>
   </section>
 
   <!-- CỘT PHẢI: điều khiển + QR + log -->

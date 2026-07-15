@@ -54,7 +54,7 @@ function calDist() { const k = numVal('t-known'); send({ cmd: 'caldist', known: 
 function gyroCal() { if (confirm('Giữ xe ĐỨNG YÊN trong ~1s để đo trôi tĩnh gyro. Bắt đầu?')) send({ cmd: 'gyrocal' }); }
 
 // ---------- Tải hình học map rồi vẽ ----------
-fetch('/map').then(r => r.json()).then(m => { MAP = m; buildGoButtons(); draw(); });
+fetch('/map').then(r => r.json()).then(m => { MAP = m; buildGoButtons(); draw(); drawCarDetail(); });
 
 // Sinh nút "Giao Cx" động từ danh sách điểm của map (trừ HOME)
 function buildGoButtons() {
@@ -121,11 +121,31 @@ function draw() {
 
   // xe (vẽ đúng tỉ lệ mm)
   const p = st.pos, th = (p.th || 0) * Math.PI / 180;
-  drawCar(cx(p), cy(p), th, sc);
+  drawCar(ctx, cx(p), cy(p), th, sc);
 
-  ctx.fillStyle = '#888'; ctx.font = '12px monospace';
+  // --- kích thước map (bật/tắt bằng checkbox) ---
+  if (showDims()) {
+    const P = (x, y) => ({ x: cx({ x, y }), y: cy({ x, y }) });
+    // ô ngang 500mm: giữa 2 cột đầu, đặt phía dưới lưới
+    let yb = rows[3] - 110;
+    let a = P(cols[0], yb), b = P(cols[1], yb);
+    extLine(ctx, cx({ x: cols[0], y: rows[3] }), cy({ x: cols[0], y: rows[3] }), a.x, a.y);
+    extLine(ctx, cx({ x: cols[1], y: rows[3] }), cy({ x: cols[1], y: rows[3] }), b.x, b.y);
+    dimLine(ctx, a.x, a.y, b.x, b.y, '500');
+    // ô dọc 475mm: giữa 2 hàng cuối, đặt bên phải lưới
+    let xr = cols[3] + 110;
+    a = P(xr, rows[2]); b = P(xr, rows[3]);
+    extLine(ctx, cx({ x: cols[3], y: rows[2] }), cy({ x: cols[3], y: rows[2] }), a.x, a.y);
+    extLine(ctx, cx({ x: cols[3], y: rows[3] }), cy({ x: cols[3], y: rows[3] }), b.x, b.y);
+    dimLine(ctx, a.x, a.y, b.x, b.y, '475');
+    // nhánh HOME 200mm
+    a = P(0, 0); b = P(cols[0], 0);
+    dimLine(ctx, a.x, a.y + 16, b.x, b.y + 16, '200', '#e6a23c');
+  }
+
+  ctx.fillStyle = '#888'; ctx.font = '12px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   ctx.fillText('ô 500×475mm | 🟠 điểm giao  🟢 HOME  🔵/🟣 xe(còn/hết hàng)', pad, 16);
-  ctx.fillText('xe vẽ đúng tỉ lệ · ⚪ tâm trục sau (mốc odometry) · 🟡 8 mắt line (🔴 C1 hỏng)', pad, 30);
+  ctx.fillText('xe & map cùng tỉ lệ · ⚪ tâm trục sau = mốc odometry', pad, 30);
 }
 function line(cx, cy, x1, y1, x2, y2) { ctx.beginPath(); ctx.moveTo(cx({ x: x1, y: y1 }), cy({ x: x1, y: y1 })); ctx.lineTo(cx({ x: x2, y: y2 }), cy({ x: x2, y: y2 })); ctx.stroke(); }
 function dot(cx, cy, x, y, r) { ctx.beginPath(); ctx.arc(cx({ x, y }), cy({ x, y }), r, 0, 7); ctx.fill(); }
@@ -134,88 +154,181 @@ function dot(cx, cy, x, y, r) { ctx.beginPath(); ctx.arc(cx({ x, y }), cy({ x, y
 // Gốc toạ độ = TÂM TRỤC 2 BÁNH SAU = điểm tham chiếu odometry (poseX/poseY).
 // Trục xe: +x = hướng tiến, +y = bên PHẢI xe.
 const CAR = {
-  wheelBase: 170,   // tâm bánh L → tâm bánh R   (đã đo)
-  wheelD:    70,    // đường kính bánh            (đã đo)
-  casterFwd: 100,   // trục sau → bánh tự do      (đã đo)
-  sensorFwd: 110,   // trục sau → thanh cảm biến  (≈ CENTER_OFFSET_MM — CẦN ĐO)
-  wheelW:    24,    // bề rộng bánh               (ước lượng)
-  bodyW:     200,   // bề ngang thân              (ước lượng)
-  bodyBack:  55,    // thân kéo về SAU trục       (ước lượng)
-  bodyFront: 135,   // thân kéo về TRƯỚC trục     (ước lượng)
-  sensorSpan: 84,   // bề ngang thanh 8 mắt       (ước lượng)
+  // --- ĐÃ ĐO (PLAN.md) ---
+  wheelBase: 170,   // tâm bánh L → tâm bánh R
+  wheelD:    70,    // đường kính bánh
+  casterFwd: 100,   // trục sau → bánh tự do
+  // --- CẦN ĐO THỰC TẾ (sửa vào đây là hình khớp ngay) ---
+  sensorFwd:  110,  // trục sau → thanh cảm biến (= CENTER_OFFSET_MM)
+  sensorSpan:  84,  // bề ngang thanh 8 mắt
+  wheelW:      24,  // bề rộng bánh
+  bodyBack:    55,  // thân xe kéo về SAU trục
+  bodyFront:  135,  // thân xe kéo về TRƯỚC trục
+  bodyW:      194,  // bề ngang thân (mặc định = wheelBase + wheelW: bánh sát mép thân)
 };
 
-function rrect(x, y, w, h, r) {
-  ctx.beginPath();
-  if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h);
+function rrect(g, x, y, w, h, r) {
+  g.beginPath();
+  if (g.roundRect) g.roundRect(x, y, w, h, r); else g.rect(x, y, w, h);
 }
 
-// Vẽ xe tại (px,py) trên canvas, hướng th (rad, hệ world y-lên), tỉ lệ sc (px/mm)
-function drawCar(px, py, th, sc) {
+// Vẽ xe tại (px,py) trên context g, hướng th (rad, hệ world y-lên), tỉ lệ sc (px/mm)
+function drawCar(g, px, py, th, sc) {
   const S = mm => mm * sc;
-  ctx.save();
-  ctx.translate(px, py);
-  ctx.rotate(-th);            // canvas y hướng xuống → xoay -th; local +x = hướng xe, +y = bên phải
+  g.save();
+  g.translate(px, py);
+  g.rotate(-th);            // canvas y hướng xuống → xoay -th; local +x = hướng xe, +y = bên phải
 
   // --- thân xe ---
-  ctx.fillStyle = st.cargo ? 'rgba(45,156,223,0.18)' : 'rgba(155,89,182,0.18)';
-  ctx.strokeStyle = st.cargo ? '#2d9cdf' : '#9b59b6';
-  ctx.lineWidth = 2;
-  rrect(-S(CAR.bodyBack), -S(CAR.bodyW / 2), S(CAR.bodyBack + CAR.bodyFront), S(CAR.bodyW), S(14));
-  ctx.fill(); ctx.stroke();
+  g.fillStyle = st.cargo ? 'rgba(45,156,223,0.18)' : 'rgba(155,89,182,0.18)';
+  g.strokeStyle = st.cargo ? '#2d9cdf' : '#9b59b6';
+  g.lineWidth = 2;
+  rrect(g, -S(CAR.bodyBack), -S(CAR.bodyW / 2), S(CAR.bodyBack + CAR.bodyFront), S(CAR.bodyW), S(14));
+  g.fill(); g.stroke();
 
   // --- 2 bánh sau (nằm ngay trên trục, y = ±85) ---
-  ctx.fillStyle = '#232a38'; ctx.strokeStyle = '#8794ab'; ctx.lineWidth = 1.5;
+  g.fillStyle = '#232a38'; g.strokeStyle = '#8794ab'; g.lineWidth = 1.5;
   for (const side of [-1, 1]) {
-    ctx.beginPath();
-    ctx.rect(-S(CAR.wheelD / 2), side * S(CAR.wheelBase / 2) - S(CAR.wheelW / 2), S(CAR.wheelD), S(CAR.wheelW));
-    ctx.fill(); ctx.stroke();
+    g.beginPath();
+    g.rect(-S(CAR.wheelD / 2), side * S(CAR.wheelBase / 2) - S(CAR.wheelW / 2), S(CAR.wheelD), S(CAR.wheelW));
+    g.fill(); g.stroke();
   }
 
   // --- trục sau (đường nối tâm 2 bánh = trục quay tại chỗ) ---
-  ctx.strokeStyle = '#8794ab'; ctx.lineWidth = 1;
-  ctx.setLineDash([3, 3]);
-  ctx.beginPath();
-  ctx.moveTo(0, -S(CAR.wheelBase / 2)); ctx.lineTo(0, S(CAR.wheelBase / 2));
-  ctx.stroke(); ctx.setLineDash([]);
+  g.strokeStyle = '#8794ab'; g.lineWidth = 1;
+  g.setLineDash([3, 3]);
+  g.beginPath();
+  g.moveTo(0, -S(CAR.wheelBase / 2)); g.lineTo(0, S(CAR.wheelBase / 2));
+  g.stroke(); g.setLineDash([]);
 
   // --- bánh tự do (caster) ---
-  ctx.fillStyle = '#3a4459'; ctx.strokeStyle = '#8794ab';
-  ctx.beginPath(); ctx.arc(S(CAR.casterFwd), 0, Math.max(2, S(13)), 0, 7);
-  ctx.fill(); ctx.stroke();
+  g.fillStyle = '#3a4459'; g.strokeStyle = '#8794ab';
+  g.beginPath(); g.arc(S(CAR.casterFwd), 0, Math.max(2, S(13)), 0, 7);
+  g.fill(); g.stroke();
 
-  // --- thanh dò line 8 mắt (C1 trái → C8 phải; C1 hỏng = đỏ) ---
-  ctx.strokeStyle = '#cfd6e0'; ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(S(CAR.sensorFwd), -S(CAR.sensorSpan / 2));
-  ctx.lineTo(S(CAR.sensorFwd),  S(CAR.sensorSpan / 2));
-  ctx.stroke();
+  // --- thanh dò line 8 mắt (C1 trái → C8 phải) ---
+  g.strokeStyle = '#cfd6e0'; g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(S(CAR.sensorFwd), -S(CAR.sensorSpan / 2));
+  g.lineTo(S(CAR.sensorFwd),  S(CAR.sensorSpan / 2));
+  g.stroke();
+  g.fillStyle = '#f1c40f';
   for (let i = 0; i < 8; i++) {
-    // i=0 (C1) là ngoài cùng TRÁI → y âm
-    const y = -S(CAR.sensorSpan / 2) + (i + 0.5) * S(CAR.sensorSpan) / 8;
-    ctx.fillStyle = (i === 0) ? '#e74c3c' : '#f1c40f';   // C1 hỏng (đã mask)
-    ctx.beginPath(); ctx.arc(S(CAR.sensorFwd), y, Math.max(1.2, S(4)), 0, 7);
-    ctx.fill();
+    const y = -S(CAR.sensorSpan / 2) + (i + 0.5) * S(CAR.sensorSpan) / 8;   // i=0 (C1) = ngoài cùng TRÁI
+    g.beginPath(); g.arc(S(CAR.sensorFwd), y, Math.max(1.2, S(4)), 0, 7);
+    g.fill();
   }
 
   // --- mũi tên hướng ---
-  ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(0, 0); ctx.lineTo(S(CAR.bodyFront + 26), 0);
-  ctx.stroke();
-  ctx.fillStyle = '#f1c40f';
-  ctx.beginPath();
-  ctx.moveTo(S(CAR.bodyFront + 38), 0);
-  ctx.lineTo(S(CAR.bodyFront + 22), -S(12));
-  ctx.lineTo(S(CAR.bodyFront + 22),  S(12));
-  ctx.closePath(); ctx.fill();
+  g.strokeStyle = '#f1c40f'; g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(0, 0); g.lineTo(S(CAR.bodyFront + 26), 0);
+  g.stroke();
+  g.fillStyle = '#f1c40f';
+  g.beginPath();
+  g.moveTo(S(CAR.bodyFront + 38), 0);
+  g.lineTo(S(CAR.bodyFront + 22), -S(12));
+  g.lineTo(S(CAR.bodyFront + 22),  S(12));
+  g.closePath(); g.fill();
 
   // --- điểm tham chiếu odometry (tâm trục sau) ---
-  ctx.fillStyle = '#fff';
-  ctx.beginPath(); ctx.arc(0, 0, 3, 0, 7); ctx.fill();
-  ctx.strokeStyle = '#111'; ctx.lineWidth = 1; ctx.stroke();
+  g.fillStyle = '#fff';
+  g.beginPath(); g.arc(0, 0, 3, 0, 7); g.fill();
+  g.strokeStyle = '#111'; g.lineWidth = 1; g.stroke();
 
-  ctx.restore();
+  g.restore();
+}
+
+// ---------- Đường kích thước (bản vẽ kỹ thuật) ----------
+// Vẽ đường đo 2 đầu mũi tên + nhãn, giữa 2 điểm canvas (x1,y1)-(x2,y2)
+function dimLine(g, x1, y1, x2, y2, label, color) {
+  const c = color || '#7ee787';
+  g.save();
+  g.strokeStyle = c; g.fillStyle = c; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+  const a = Math.atan2(y2 - y1, x2 - x1), h = 5;
+  for (const [x, y, dir] of [[x1, y1, a], [x2, y2, a + Math.PI]]) {
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + h * Math.cos(dir - 0.4), y + h * Math.sin(dir - 0.4));
+    g.lineTo(x + h * Math.cos(dir + 0.4), y + h * Math.sin(dir + 0.4));
+    g.closePath(); g.fill();
+  }
+  // nhãn ở giữa, có nền để dễ đọc
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  g.font = 'bold 11px monospace';
+  const w = g.measureText(label).width;
+  g.fillStyle = '#0f1115';
+  g.fillRect(mx - w / 2 - 3, my - 7, w + 6, 14);
+  g.fillStyle = c;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(label, mx, my);
+  g.restore();
+}
+// Vạch gióng (extension line)
+function extLine(g, x1, y1, x2, y2) {
+  g.save();
+  g.strokeStyle = '#4b5563'; g.lineWidth = 1;
+  g.setLineDash([2, 3]);
+  g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
+  g.restore();
+}
+
+// ---------- Bản vẽ xe có kích thước (để kiểm tra số đo) ----------
+function showDims() { const el = document.getElementById('dims'); return !el || el.checked; }
+
+function drawCarDetail() {
+  const cv2 = document.getElementById('carcv');
+  if (!cv2) return;
+  const g = cv2.getContext('2d');
+  const W = cv2.width, H = cv2.height;
+  g.clearRect(0, 0, W, H);
+
+  // khung mm cần hiển thị: từ -bodyBack-60 tới sensorFwd+70 (dọc), ±(bodyW/2+70) (ngang)
+  const xMin = -(CAR.bodyBack + 70), xMax = CAR.sensorFwd + 80;
+  const yMax = CAR.bodyW / 2 + 75;
+  const sc = Math.min(W / (xMax - xMin), H / (2 * yMax));   // px/mm, đồng nhất 2 trục
+  const S = mm => mm * sc;
+  // đặt gốc (tâm trục sau) sao cho xe nằm giữa; xe hướng LÊN trên màn hình (th = +90°)
+  const ox = W / 2, oy = H / 2 + S((xMax + xMin) / 2);
+
+  // vẽ xe hướng lên (th = PI/2)
+  drawCar(g, ox, oy, Math.PI / 2, sc);
+
+  if (!showDims()) return;
+
+  // Xe hướng lên: local +x(tiến) = canvas -y ; local +y(phải) = canvas +x
+  const FX = (fwd, right) => ({ x: ox + S(right), y: oy - S(fwd) });
+
+  // wheelBase 170 (tâm bánh trái ↔ tâm bánh phải), đặt dưới trục
+  let a = FX(-CAR.bodyBack - 40, -CAR.wheelBase / 2), b = FX(-CAR.bodyBack - 40, CAR.wheelBase / 2);
+  extLine(g, FX(0, -CAR.wheelBase / 2).x, FX(0, -CAR.wheelBase / 2).y, a.x, a.y);
+  extLine(g, FX(0,  CAR.wheelBase / 2).x, FX(0,  CAR.wheelBase / 2).y, b.x, b.y);
+  dimLine(g, a.x, a.y, b.x, b.y, 'wheelBase 170');
+
+  // casterFwd 100 (trục sau → caster) — bên trái xe
+  a = FX(0, -CAR.bodyW / 2 - 34); b = FX(CAR.casterFwd, -CAR.bodyW / 2 - 34);
+  extLine(g, FX(0, 0).x, FX(0, 0).y, a.x, a.y);
+  extLine(g, FX(CAR.casterFwd, 0).x, FX(CAR.casterFwd, 0).y, b.x, b.y);
+  dimLine(g, a.x, a.y, b.x, b.y, 'caster 100');
+
+  // sensorFwd (trục sau → thanh cảm biến) — bên phải xe  = CENTER_OFFSET_MM
+  a = FX(0, CAR.bodyW / 2 + 40); b = FX(CAR.sensorFwd, CAR.bodyW / 2 + 40);
+  extLine(g, FX(0, 0).x, FX(0, 0).y, a.x, a.y);
+  extLine(g, FX(CAR.sensorFwd, 0).x, FX(CAR.sensorFwd, 0).y, b.x, b.y);
+  dimLine(g, a.x, a.y, b.x, b.y, 'cảm biến ' + CAR.sensorFwd + '?', '#e6a23c');
+
+  // wheelD 70 (đường kính bánh) — dọc theo bánh trái
+  a = FX(-CAR.wheelD / 2, -CAR.wheelBase / 2 - 30); b = FX(CAR.wheelD / 2, -CAR.wheelBase / 2 - 30);
+  dimLine(g, a.x, a.y, b.x, b.y, 'Ø70');
+
+  // sensorSpan (bề ngang thanh mắt)
+  a = FX(CAR.sensorFwd + 26, -CAR.sensorSpan / 2); b = FX(CAR.sensorFwd + 26, CAR.sensorSpan / 2);
+  dimLine(g, a.x, a.y, b.x, b.y, CAR.sensorSpan + '?', '#e6a23c');
+
+  g.fillStyle = '#7f8c9b'; g.font = '11px monospace'; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  g.fillText('xanh = đã đo (PLAN)   cam = ước lượng, cần đo', 6, 14);
+  g.fillText('gốc ⚪ = tâm trục sau (mốc odometry)', 6, 28);
 }
 
 // ---------- Trạng thái + log ----------
