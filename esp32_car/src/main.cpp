@@ -278,6 +278,56 @@ void mpuInit() {
   Serial.printf(">> MPU6050 OK (WHO_AM_I=0x%02X, SDA=%d SCL=%d)\n", who, MPU_SDA, MPU_SCL);
   lastGyroUs = micros();
 }
+// Quet bus I2C: liet ke dia chi tim thay. Neu thay MPU ma chua init -> init lai.
+void i2cScan() {
+  // --- Chan doan muc dien ap 2 chan bus (truoc khi quet) ---
+  // Bus I2C ranh phai o muc CAO (nho tro treo). Neu doc duoc THAP = chan bi
+  // noi xuong GND / thiet bi giu bus -> khong bao gio giao tiep duoc.
+  Wire.end();
+  pinMode(MPU_SDA, INPUT_PULLUP);
+  pinMode(MPU_SCL, INPUT_PULLUP);
+  delay(5);
+  int sdaLv = digitalRead(MPU_SDA), sclLv = digitalRead(MPU_SCL);
+  hubLog("[i2c] Muc bus khi ranh: SDA(32)=" + String(sdaLv ? "CAO" : "THAP <-- LOI") +
+         "  SCL(33)=" + String(sclLv ? "CAO" : "THAP <-- LOI") + "  (dung: ca hai CAO)");
+  if (!sclLv || !sdaLv)
+    hubLog("[i2c] Chan bi ghim xuong GND. Neu SCL(33) THAP: GO HAN day GPIO33 -> MUX S3 (S3 chi noi GND)");
+  Wire.begin(MPU_SDA, MPU_SCL, 100000);   // 100kHz cho on dinh khi quet
+  delay(5);
+
+  String found = "";
+  int n = 0;
+  for (uint8_t a = 1; a < 127; a++) {
+    Wire.beginTransmission(a);
+    if (Wire.endTransmission() == 0) { found += " 0x" + String(a, HEX); n++; }
+    delay(2);
+  }
+  if (n == 0) {
+    hubLog("[i2c] KHONG thay thiet bi nao. Kiem tra: SDA=32, SCL=33, VCC=3.3V, GND chung, AD0=GND");
+    return;
+  }
+  hubLog("[i2c] Thay " + String(n) + " thiet bi:" + found + "   (MPU6050 = 0x68)");
+  if (!mpuOK) { hubLog("[i2c] Thu khoi tao lai MPU6050..."); mpuInit(); if (mpuOK) gyroCalibrate(); }
+}
+
+// Doc va bao cao 8 mat line (test cam bien tu xa)
+void reportLine() {
+  readLine();
+  String s = "[line] RAW:";
+  for (int i = 0; i < 8; i++) s += " " + String(lineRaw[i]);
+  s += " | den=1:";
+  int cnt = 0;
+  for (int i = 0; i < 8; i++) {
+    if (!SENSOR_OK[i]) { s += "x"; continue; }
+    int th = lineCalibrated ? lineThresh[i] : LINE_THRESHOLD;
+    bool black = lineRaw[i] < th;
+    s += black ? "1" : "0";
+    if (black) cnt++;
+  }
+  s += " cnt=" + String(cnt) + (lineCalibrated ? " (da cali)" : " (CHUA cali)");
+  hubLog(s);
+}
+
 // Lay mau gyro va cong don goc. Tu gioi han ~250Hz.
 void updateGyro() {
   if (!mpuOK) return;
@@ -943,6 +993,8 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         hubLog("[gyro] Do troi tinh - GIU XE DUNG YEN...");
         gyroCalibrate();
       }
+      else if (!strcmp(cmd, "i2cscan")) i2cScan();      // quet bus I2C (tim MPU6050)
+      else if (!strcmp(cmd, "line"))    reportLine();   // doc 8 mat line
       break;
     }
     default: break;

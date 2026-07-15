@@ -194,6 +194,11 @@ function onConnection(ws) {
           logEvent('🎯 Đo trôi tĩnh gyro — giữ xe đứng yên');
         } else logEvent('⚠️ Chưa có xe để đo gyro');
         break;
+      case 'i2cscan':                                   // quét bus I2C (tìm MPU6050)
+      case 'line':                                      // đọc 8 mắt cảm biến line
+        if (carSocket && carSocket.readyState === 1) carSocket.send(JSON.stringify(m));
+        else logEvent('⚠️ Chưa có xe kết nối');
+        break;
     }
   });
 
