@@ -41,6 +41,7 @@ String cfgHub  = HUB_HOST;    // IP laptop chay server.js
 void setupWiFi();
 void startHub();
 void startOTA();
+void onWifiUp();
 void saveNetConfig();
 void hubLog(const String& s);   // in Serial + day log len hub (web doc duoc)
 
@@ -160,7 +161,8 @@ int    lineCount = 0;             // so mat thay den o lan doc gan nhat
 const float MIN_EDGE = 120;       // mm toi thieu 1 doan truoc khi cho ket thuc
 const float MAX_EDGE = 750;       // mm toi da 1 doan (chan runaway neu miss giao diem)
 const int   INTERSECT_N = 5;      // >= so mat thay den => coi la giao diem (nga tu)
-int    CENTER_OFFSET_MM = 70;     // sau khi thay nga tu, bo them de canh TRUC BANH vao tam (= k/c cam bien -> truc banh)
+int    CENTER_OFFSET_MM = 145;    // sau khi thay nga tu, bo them de canh TRUC BANH vao tam
+                                  // = k/c thanh cam bien -> truc banh sau (DA DO: 145mm)
 float  centerStartMM = 0;         // moc quang duong khi bat dau bo canh tam
 
 // ===================== Encoder ISR (quadrature) =====================
@@ -715,7 +717,7 @@ void handleCommand(String cmd) {
         saveNetConfig();
         Serial.println(F(">> Ket noi lai voi cau hinh moi..."));
         WiFi.disconnect(); wifiOK = false; hubOK = false;
-        setupWiFi(); startHub(); startOTA();   // startOTA: neu thieu -> mat OTA khi boot WiFi FAIL roi noi lai
+        setupWiFi();          // -> onWifiUp() tu bat web + hub + OTA
       }
       else Serial.println(F("Dung: Wn<ten> / Wp<mk> / Wh<ip> / Ws (luu+ket noi) / W (xem)"));
       break;
@@ -1039,26 +1041,31 @@ void startHub() {
   Serial.printf(">> Ket noi hub  ws://%s:%d\n", cfgHub.c_str(), HUB_PORT);
 }
 
+// Bat toan bo dich vu mang khi WiFi da len. Goi 1 lan (duoc gac boi wifiOK).
+void onWifiUp() {
+  wifiOK = true;
+  Serial.print(F(">> WiFi OK. Mo trinh duyet: http://"));
+  Serial.println(WiFi.localIP());
+  server.on("/", handleRoot);
+  server.on("/start", handleStart);
+  server.on("/stop", handleStop);
+  server.on("/status", handleStatus);
+  server.begin();
+  beep(80);
+  startHub();
+  startOTA();
+}
+
 void setupWiFi() {
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(cfgSsid.c_str(), cfgPass.c_str());
   Serial.printf("Ket noi WiFi '%s' ...\n", cfgSsid.c_str());
   unsigned long t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000) { delay(250); Serial.print('.'); }
   Serial.println();
-  if (WiFi.status() == WL_CONNECTED) {
-    wifiOK = true;
-    Serial.print(F(">> WiFi OK. Mo trinh duyet: http://"));
-    Serial.println(WiFi.localIP());
-    server.on("/", handleRoot);
-    server.on("/start", handleStart);
-    server.on("/stop", handleStop);
-    server.on("/status", handleStatus);
-    server.begin();
-    beep(80);
-  } else {
-    Serial.println(F(">> WiFi FAIL - chay khong web (van dieu khien qua Serial)"));
-  }
+  if (WiFi.status() == WL_CONNECTED) onWifiUp();
+  else Serial.println(F(">> WiFi chua len (qua 10s) - loop se tu bat dich vu khi WiFi len"));
 }
 
 // ===================== Setup =====================
@@ -1111,6 +1118,15 @@ void loop() {
   if (Serial.available()) {
     String line = Serial.readStringUntil('\n');
     handleCommand(line);
+  }
+
+  // WiFi co the len TRE hon timeout 10s luc boot (router cham), hoac tu noi lai sau khi rot.
+  // Neu khong theo doi -> wifiOK ket false vinh vien: xe co IP, ping duoc, nhung
+  // hub/OTA/web KHONG BAO GIO chay (da tung dinh loi nay).
+  static unsigned long lastWifiChk = 0;
+  if (!wifiOK && millis() - lastWifiChk > 2000) {
+    lastWifiChk = millis();
+    if (WiFi.status() == WL_CONNECTED) onWifiUp();
   }
 
   // Web server + WebSocket client toi hub + OTA

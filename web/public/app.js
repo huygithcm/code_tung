@@ -54,7 +54,7 @@ function calDist() { const k = numVal('t-known'); send({ cmd: 'caldist', known: 
 function gyroCal() { if (confirm('Giữ xe ĐỨNG YÊN trong ~1s để đo trôi tĩnh gyro. Bắt đầu?')) send({ cmd: 'gyrocal' }); }
 
 // ---------- Tải hình học map rồi vẽ ----------
-fetch('/map').then(r => r.json()).then(m => { MAP = m; buildGoButtons(); draw(); drawCarDetail(); });
+fetch('/map').then(r => r.json()).then(m => { MAP = m; buildGoButtons(); draw(); });
 
 // Sinh nút "Giao Cx" động từ danh sách điểm của map (trừ HOME)
 function buildGoButtons() {
@@ -158,12 +158,12 @@ const CAR = {
   wheelBase: 170,   // tâm bánh L → tâm bánh R
   wheelD:    70,    // đường kính bánh
   casterFwd: 100,   // trục sau → bánh tự do
+  sensorFwd:  145,  // trục sau → thanh cảm biến (= CENTER_OFFSET_MM)  ← đã đo
+  sensorSpan:  85,  // bề ngang thanh 8 mắt                            ← đã đo
   // --- CẦN ĐO THỰC TẾ (sửa vào đây là hình khớp ngay) ---
-  sensorFwd:  110,  // trục sau → thanh cảm biến (= CENTER_OFFSET_MM)
-  sensorSpan:  84,  // bề ngang thanh 8 mắt
   wheelW:      24,  // bề rộng bánh
   bodyBack:    55,  // thân xe kéo về SAU trục
-  bodyFront:  135,  // thân xe kéo về TRƯỚC trục
+  bodyFront:  160,  // thân xe kéo về TRƯỚC trục (phải ≥ sensorFwd)
   bodyW:      194,  // bề ngang thân (mặc định = wheelBase + wheelW: bánh sát mép thân)
 };
 
@@ -274,62 +274,7 @@ function extLine(g, x1, y1, x2, y2) {
   g.restore();
 }
 
-// ---------- Bản vẽ xe có kích thước (để kiểm tra số đo) ----------
 function showDims() { const el = document.getElementById('dims'); return !el || el.checked; }
-
-function drawCarDetail() {
-  const cv2 = document.getElementById('carcv');
-  if (!cv2) return;
-  const g = cv2.getContext('2d');
-  const W = cv2.width, H = cv2.height;
-  g.clearRect(0, 0, W, H);
-
-  // khung mm cần hiển thị: từ -bodyBack-60 tới sensorFwd+70 (dọc), ±(bodyW/2+70) (ngang)
-  const xMin = -(CAR.bodyBack + 70), xMax = CAR.sensorFwd + 80;
-  const yMax = CAR.bodyW / 2 + 75;
-  const sc = Math.min(W / (xMax - xMin), H / (2 * yMax));   // px/mm, đồng nhất 2 trục
-  const S = mm => mm * sc;
-  // đặt gốc (tâm trục sau) sao cho xe nằm giữa; xe hướng LÊN trên màn hình (th = +90°)
-  const ox = W / 2, oy = H / 2 + S((xMax + xMin) / 2);
-
-  // vẽ xe hướng lên (th = PI/2)
-  drawCar(g, ox, oy, Math.PI / 2, sc);
-
-  if (!showDims()) return;
-
-  // Xe hướng lên: local +x(tiến) = canvas -y ; local +y(phải) = canvas +x
-  const FX = (fwd, right) => ({ x: ox + S(right), y: oy - S(fwd) });
-
-  // wheelBase 170 (tâm bánh trái ↔ tâm bánh phải), đặt dưới trục
-  let a = FX(-CAR.bodyBack - 40, -CAR.wheelBase / 2), b = FX(-CAR.bodyBack - 40, CAR.wheelBase / 2);
-  extLine(g, FX(0, -CAR.wheelBase / 2).x, FX(0, -CAR.wheelBase / 2).y, a.x, a.y);
-  extLine(g, FX(0,  CAR.wheelBase / 2).x, FX(0,  CAR.wheelBase / 2).y, b.x, b.y);
-  dimLine(g, a.x, a.y, b.x, b.y, 'wheelBase 170');
-
-  // casterFwd 100 (trục sau → caster) — bên trái xe
-  a = FX(0, -CAR.bodyW / 2 - 34); b = FX(CAR.casterFwd, -CAR.bodyW / 2 - 34);
-  extLine(g, FX(0, 0).x, FX(0, 0).y, a.x, a.y);
-  extLine(g, FX(CAR.casterFwd, 0).x, FX(CAR.casterFwd, 0).y, b.x, b.y);
-  dimLine(g, a.x, a.y, b.x, b.y, 'caster 100');
-
-  // sensorFwd (trục sau → thanh cảm biến) — bên phải xe  = CENTER_OFFSET_MM
-  a = FX(0, CAR.bodyW / 2 + 40); b = FX(CAR.sensorFwd, CAR.bodyW / 2 + 40);
-  extLine(g, FX(0, 0).x, FX(0, 0).y, a.x, a.y);
-  extLine(g, FX(CAR.sensorFwd, 0).x, FX(CAR.sensorFwd, 0).y, b.x, b.y);
-  dimLine(g, a.x, a.y, b.x, b.y, 'cảm biến ' + CAR.sensorFwd + '?', '#e6a23c');
-
-  // wheelD 70 (đường kính bánh) — dọc theo bánh trái
-  a = FX(-CAR.wheelD / 2, -CAR.wheelBase / 2 - 30); b = FX(CAR.wheelD / 2, -CAR.wheelBase / 2 - 30);
-  dimLine(g, a.x, a.y, b.x, b.y, 'Ø70');
-
-  // sensorSpan (bề ngang thanh mắt)
-  a = FX(CAR.sensorFwd + 26, -CAR.sensorSpan / 2); b = FX(CAR.sensorFwd + 26, CAR.sensorSpan / 2);
-  dimLine(g, a.x, a.y, b.x, b.y, CAR.sensorSpan + '?', '#e6a23c');
-
-  g.fillStyle = '#7f8c9b'; g.font = '11px monospace'; g.textAlign = 'left'; g.textBaseline = 'alphabetic';
-  g.fillText('xanh = đã đo (PLAN)   cam = ước lượng, cần đo', 6, 14);
-  g.fillText('gốc ⚪ = tâm trục sau (mốc odometry)', 6, 28);
-}
 
 // ---------- Trạng thái + log ----------
 function renderStatus() {

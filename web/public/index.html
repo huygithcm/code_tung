@@ -23,12 +23,9 @@
     <h2>🗺️ Bản đồ &amp; vị trí xe</h2>
     <canvas id="map" width="520" height="560"></canvas>
     <label class="hint" style="display:block;margin-top:6px">
-      <input type="checkbox" id="dims" checked onchange="draw();drawCarDetail()"> 📐 Hiện kích thước (mm)
+      <input type="checkbox" id="dims" checked onchange="draw()"> 📐 Hiện kích thước (mm)
     </label>
     <div id="status" class="status">Đang chờ dữ liệu…</div>
-
-    <h2>📐 Kích thước xe — kiểm tra giúp mình</h2>
-    <canvas id="carcv" width="520" height="330"></canvas>
   </section>
 
   <!-- CỘT PHẢI: điều khiển + QR + log -->
@@ -76,7 +73,7 @@
       <label>KpT<input id="t-kpt" type="number" step="5" value="200"></label>
       <label>KdT<input id="t-kdt" type="number" step="1" value="35"></label>
       <label>tol(°)<input id="t-turntol" type="number" step="0.5" value="1.5"></label>
-      <label>canh tâm(mm)<input id="t-center" type="number" step="5" value="70"></label>
+      <label>canh tâm(mm)<input id="t-center" type="number" step="5" value="145"></label>
       <button class="btn b-go" onclick="applyTune()">Áp dụng</button>
     </div>
     <div class="tune">

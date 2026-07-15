@@ -36,6 +36,22 @@ pio run -e debug -t upload --upload-port COM5   # qua USB (khi OTA hỏng)
 hoặc PowerShell mở SerialPort rồi treo). Kill terminal đang treo → **chờ vài giây** cho Windows
 nhả handle → mở lại được. Chỉ 1 chương trình được mở COM tại một thời điểm.
 
+## 0. ⚠️ ĐỌC TRƯỚC — firmware mới CHƯA nạp được lên xe
+
+Lúc dừng việc: **USB đã rút (COM5 không tồn tại)** và **OTA không dùng được** vì xe đang kẹt ở
+trạng thái lỗi mô tả bên dưới. Code đã **commit + biên dịch SUCCESS**, chỉ còn thiếu bước nạp.
+
+**Cách nạp lại (chọn 1):**
+- **Tắt/bật nguồn xe** (khuyên dùng) → boot lại, WiFi lên trong 10s → OTA sống lại →
+  `pio run -e ota -t upload`.
+- Hoặc cắm USB → `pio run -e debug -t upload --upload-port COM5`.
+
+**Bug đã sửa (đang chờ nạp):** WiFi lên **trễ hơn timeout 10s** lúc boot → `wifiOK` kẹt `false`
+**vĩnh viễn**. Hậu quả: xe **có IP, ping được, nhưng hub + OTA + web server không bao giờ chạy**
+(biểu hiện: `source = none` trên web, OTA báo `No response from the ESP`).
+Đã thêm vào `loop()`: cứ 2s kiểm tra, thấy `WiFi.status()==WL_CONNECTED` mà dịch vụ chưa chạy
+thì gọi `onWifiUp()` (bật web + hub + OTA). Kèm `WiFi.setAutoReconnect(true)`.
+
 ## 3. ĐANG DANG DỞ — việc cần làm ngay lần sau
 
 Xe lúc test đang **bị nhấc lên (sạc pin)** nên mọi số liệu đều không dùng được.
@@ -61,9 +77,10 @@ khi đó gyro là nguồn đúng, cứ để `GYRO_W = 0.98`.
 
 ## 4. Việc còn treo (chưa làm)
 
-- [ ] **`CENTER_OFFSET_MM`** (mặc định 70) — chống *rẽ sớm ở ngã tư*. Cần **đo bằng thước**:
-      khoảng cách từ **thanh cảm biến → trục bánh sau**. Nhập ở ô "canh tâm(mm)" → Áp dụng.
-      Rẽ sớm → tăng; rẽ trễ/vọt qua ngã tư → giảm.
+- [x] ~~Đo `CENTER_OFFSET_MM`~~ → **đã đo: 145mm** (thanh cảm biến → trục bánh sau).
+      Đã ghi cứng vào firmware (trước để 70 → **thiếu 75mm** → chính là thủ phạm *rẽ sớm*).
+      **Chưa test thực tế** — lần sau chạy `go C1` xem còn rẽ sớm không; rẽ sớm → tăng,
+      vọt qua ngã tư → giảm (ô "canh tâm(mm)" trên web).
 - [ ] **`WHEEL_DIAMETER_MM`** — hiệu chuẩn quãng đường. Đặt xe ở giao điểm, hướng theo line,
       bấm **📏 Chạy đo 1 cạnh** (biết = 475mm). Chạy 2–3 lần lấy trung bình "gợi ý" →
       nhập ô WHEEL_Ø → **Ghi Ø**. Rồi báo để ghi cứng vào firmware.
@@ -83,6 +100,11 @@ khi đó gyro là nguồn đúng, cứ để `GYRO_W = 0.98`.
   vĩnh viễn** (biểu hiện: `No response from the ESP`). Đã gọi `startOTA()` sau `setupWiFi()`.
 - **Phần cứng:** MUX chỉ dùng CH0–CH7 → **S3 nối GND**, giải phóng GPIO33 làm SCL cho MPU6050
   (SDA=32, SCL=33, AD0=GND, VCC=3.3V). Xem [PINOUT.md](PINOUT.md).
+- **Kích thước xe (đã đo đủ):** bánh Ø70, 2 bánh sau cách 170, caster trước 100,
+  **thanh cảm biến trước 145** (⇒ **nằm TRƯỚC caster**), bề ngang thanh mắt 85.
+  ⚠️ `PLAN.md` phần chữ ghi *"thanh dò line ngay sau bánh tự do"* là **SAI** — hình vẽ mới đúng.
+- **Web:** xe vẽ đúng tỉ lệ mm, gốc = tâm trục sau (mốc odometry thật), chung hệ số tỉ lệ với
+  map; có checkbox 📐 hiện kích thước ô 500×475.
 
 ## 6. Lệnh điều khiển từ xa (WS, qua web)
 

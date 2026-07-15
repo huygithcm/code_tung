@@ -74,6 +74,8 @@ Trong code: C1→C8 = CH0→CH7 = `sensor[0..7]` (trái → phải).
 | Số xung/vòng | `ENCODER_PPR` | **370** | ✅ đã đo |
 | Khoảng cách tâm 2 bánh sau (mm) | `WHEEL_BASE_MM` | **170.0** | ✅ đã đo |
 | Trục bánh sau → bánh tự do (mm) | `CASTER_DIST_MM` | **100.0** | ✅ đã đo |
+| **Trục bánh sau → thanh cảm biến (mm)** | `CENTER_OFFSET_MM` | **145.0** | ✅ đã đo |
+| Bề ngang thanh 8 mắt (mm) | *(chỉ dùng để vẽ web)* | **85.0** | ✅ đã đo |
 | Góc servo GIỮ | `SERVO_HOLD` | 0° | ⬜ cần chỉnh |
 | Góc servo THẢ | `SERVO_DROP` | 90° | ⬜ cần chỉnh |
 
@@ -94,7 +96,7 @@ Kết quả đo sau hiệu chuẩn: rẽ **+90° → 89.94°** (sai số 0.06°)
 | `Kd` | 15 | ⬜ tune trên đường |
 | `baseSpeed` | **200** | chỉnh sống trên web (panel ⚙️) |
 | `MOTOR_MIN_PWM` | **120** | sàn PWM — dưới ngưỡng này motor **kêu mà không quay** |
-| `CENTER_OFFSET_MM` | **70** | ⬜ đo thực tế = k/c **cảm biến → trục bánh**. Sau khi thấy ngã tư, bò thêm đoạn này để canh trục bánh vào tâm rồi mới rẽ (chống **rẽ sớm → mất line**) |
+| `CENTER_OFFSET_MM` | **145** | ✅ đã đo (thanh cảm biến → trục bánh sau). Sau khi thấy ngã tư, bò thêm đoạn này để canh trục bánh vào tâm rồi mới rẽ (chống **rẽ sớm → mất line**) |
 
 ### Gyro MPU6050 — hợp nhất odometry
 | Biến | Giá trị | Ghi chú |
@@ -131,6 +133,10 @@ mm mỗi xung   = 219.9 / 370      ≈ 0.594 mm/xung
 
    · = tâm xe (điểm tham chiếu odometry)
 ```
+
+> ⚠️ **Thứ tự thật từ đầu xe về sau:** thanh cảm biến (**145mm**) → caster (**100mm**) → trục
+> bánh sau (**0**). Tức **cảm biến nằm TRƯỚC caster**. Phần chữ trong `PLAN.md` ghi *"thanh dò
+> line đặt ngay sau bánh tự do"* là **SAI** — hình vẽ trong PLAN mới đúng.
 
 > Ghi chú: `WHEEL_BASE_MM = 170` dùng để tính góc quay khi rẽ
 > (Δθ = (S_phải − S_trái) / 170). `CASTER_DIST_MM = 100` là khoảng cách
