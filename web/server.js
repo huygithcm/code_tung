@@ -10,6 +10,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const os = require('os');
+const dgram = require('dgram');
 const express = require('express');
 const selfsigned = require('selfsigned');
 const { WebSocketServer } = require('ws');
@@ -233,6 +234,21 @@ async function boot() {
   const wssCar = new WebSocketServer({ port: cfg.PORT + 2 });
   wssCar.on('connection', onConnection);
 
+  // ---- UDP discovery: xe tự tìm hub, KHÔNG cần nạp IP tay khi DHCP đổi IP ----
+  // Xe broadcast "CAR_WHO?" tới port này → server trả lời IP LAN của mình.
+  const disc = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  disc.on('message', (msg, rinfo) => {
+    if (!msg.toString().startsWith('CAR_WHO')) return;
+    // Chọn IP cùng subnet với xe để trả lời (máy có nhiều card mạng)
+    const pfx = rinfo.address.split('.').slice(0, 3).join('.') + '.';
+    const myIp = ips.find(ip => ip.startsWith(pfx)) || ips[0];
+    if (!myIp) return;
+    const reply = Buffer.from(`HUB ${myIp} ${cfg.PORT + 2}`);
+    disc.send(reply, rinfo.port, rinfo.address);
+    console.log(`  🔎 Xe ${rinfo.address} hỏi hub → trả lời ${myIp}:${cfg.PORT + 2}`);
+  });
+  disc.bind(cfg.PORT + 3, () => { try { disc.setBroadcast(true); } catch (_) {} });
+
   // HTTP → HTTPS redirect (mở http://... tự nhảy sang https://...)
   http.createServer((req, res) => {
     const host = (req.headers.host || '').replace(/:\d+$/, '');
@@ -245,7 +261,8 @@ async function boot() {
     for (const ip of ips)
       console.log(`  📱 Điện thoại (cùng WiFi):   https://${ip}:${cfg.PORT}   ← mở để quét QR`);
     console.log(`     (gõ http:// cũng được, tự nhảy sang https. Bấm "Vẫn truy cập" khi cảnh báo cert tự ký.)`);
-    console.log(`  🚗 ESP32 kết nối WebSocket:  ws://<IP-máy-này>:${cfg.PORT + 2}  (gửi {"role":"car"})\n`);
+    console.log(`  🚗 ESP32 kết nối WebSocket:  ws://<IP-máy-này>:${cfg.PORT + 2}  (gửi {"role":"car"})`);
+    console.log(`  🔎 Xe tự tìm hub qua UDP broadcast port ${cfg.PORT + 3} — không cần nạp IP tay\n`);
   });
 }
 boot();

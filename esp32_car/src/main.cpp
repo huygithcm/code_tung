@@ -18,6 +18,7 @@
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
 #include <Wire.h>
+#include <WiFiUdp.h>
 
 // ===================== WiFi (STA - noi WiFi nha) =====================
 // SUA ten/mat khau WiFi nha ban o day:
@@ -25,8 +26,10 @@
 #define WIFI_PASS "0348903226"  // <-- SUA mat khau WiFi
 
 // Hub (server Node) - IP may chay server + cong WS THUONG cho xe (= PORT+2 = 3002)
-#define HUB_HOST "192.168.1.164"   // <-- SUA IP may chay server.js
+// Chi la MAC DINH du phong: xe TU TIM hub qua UDP broadcast (khong can sua tay).
+#define HUB_HOST "192.168.1.32"
 #define HUB_PORT 3002
+#define DISC_PORT 3003             // cong UDP discovery cua server (= PORT+3)
 
 WebServer server(80);
 bool wifiOK = false;
@@ -1041,6 +1044,50 @@ void startHub() {
   Serial.printf(">> Ket noi hub  ws://%s:%d\n", cfgHub.c_str(), HUB_PORT);
 }
 
+// ===================== Tu tim hub (UDP broadcast) =====================
+// DHCP hay doi IP laptop -> thay vi go tay 'Wh<ip>', xe hoi cA mang:
+// broadcast "CAR_WHO?" -> server tra loi "HUB <ip> <port>" -> luu NVS + noi lai.
+WiFiUDP disc;
+bool discReady = false;
+
+void discoverHub() {
+  if (!wifiOK || hubOK) return;                 // da noi duoc hub thi thoi
+  if (!discReady) { disc.begin(DISC_PORT); discReady = true; }
+
+  // 1) Doc goi tra loi (neu co)
+  int sz = disc.parsePacket();
+  if (sz > 0) {
+    char buf[64] = {0};
+    int n = disc.read(buf, sizeof(buf) - 1);
+    if (n > 0 && strncmp(buf, "HUB ", 4) == 0) {
+      String ip = String(buf + 4);
+      int sp = ip.indexOf(' ');
+      if (sp > 0) ip = ip.substring(0, sp);
+      ip.trim();
+      if (ip.length()) {
+        buzzerTone(2600, 60); delay(60); buzzerTone(3200, 90);   // 2 bip len giong = DA TIM THAY
+        if (ip != cfgHub) {
+          hubLog("[disc] Tim thay hub moi: " + ip + " (cu: " + cfgHub + ") -> luu & noi lai");
+          cfgHub = ip;
+          saveNetConfig();
+        }
+        startHub();
+      }
+      return;
+    }
+  }
+
+  // 2) Hoi lai moi 3s (kem 1 bip NGAN = dang tim hub)
+  static unsigned long lastAsk = 0;
+  if (millis() - lastAsk < 3000) return;
+  lastAsk = millis();
+  IPAddress bc = WiFi.localIP(); bc[3] = 255;   // broadcast trong subnet hien tai
+  disc.beginPacket(bc, DISC_PORT);
+  disc.print("CAR_WHO?");
+  disc.endPacket();
+  buzzerTone(1500, 25);                          // bip ngan, tram = dang tim
+}
+
 // Bat toan bo dich vu mang khi WiFi da len. Goi 1 lan (duoc gac boi wifiOK).
 void onWifiUp() {
   wifiOK = true;
@@ -1131,6 +1178,9 @@ void loop() {
 
   // Web server + WebSocket client toi hub + OTA
   if (wifiOK) { server.handleClient(); wsClient.loop(); ArduinoOTA.handle(); }
+
+  // Chua noi duoc hub -> tu di tim (DHCP doi IP laptop cung khong sao)
+  if (wifiOK && !hubOK) discoverHub();
 
   // Odometry: cap nhat lien tuc
   updateOdometry();

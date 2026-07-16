@@ -3,27 +3,27 @@
 > Nhánh: `hieu-chuan-vi-tri-xe`. Cập nhật: 2026-07-16.
 > Mục đích: mở file này ra là chạy tiếp được ngay, không phải dò lại từ đầu.
 
-## 1. Khởi động lại môi trường (làm theo thứ tự)
+## 1. Khởi động lại môi trường
 
 ```bash
-# 1. Chạy web server
-cd web && node server.js
-#    -> in ra IP laptop, VD: https://192.168.1.32:3000
+cd web && node server.js      # -> https://<ip-laptop>:3000
 ```
 
-⚠️ **IP hay đổi (DHCP)** — cả IP laptop lẫn IP xe. Mỗi lần test lại phải kiểm tra:
+✅ **KHÔNG cần điền IP nữa** (đã xử lý xong — DHCP đổi IP thoải mái):
 
-```bash
-ipconfig | grep IPv4          # IP laptop  (hub)
-```
+| Chiều | Cách giải quyết |
+|---|---|
+| **Nạp firmware** (PC → xe) | `upload_port = esp32-car.local` (mDNS do ArduinoOTA đăng ký). Chỉ cần `pio run -e ota -t upload` |
+| **Xe tìm hub** (xe → PC) | Xe broadcast UDP `CAR_WHO?` port **3003** → server trả lời IP → xe lưu NVS + nối lại. **Tự động** |
 
-**Nếu IP laptop đổi** → phải nạp IP mới xuống xe, nếu không xe không nối được hub:
-- Qua Serial (COM5, 115200): gõ `Wh<ip-laptop-moi>` rồi `Ws` (lưu NVS + kết nối lại).
-- Xe sẽ in ra IP của chính nó: `>> WiFi OK. Mo trinh duyet: http://<ip-xe>`
+**Bíp báo trạng thái tìm hub:**
+- 🔉 **1 bíp ngắn trầm** mỗi 3s = đang tìm hub (chưa thấy).
+- 🔊 **2 bíp lên giọng** = đã tìm thấy, nối được.
 
-**Nếu IP xe đổi** → sửa `upload_port` trong `platformio.ini` (env `ota`) thành IP xe mới.
+Chỉ đi tìm khi **chưa nối được hub** — nối rồi thì im lặng, không tốn băng thông.
 
-Giá trị lần test gần nhất: laptop `192.168.1.32`, xe `192.168.1.6`.
+> Nếu mạng chặn mDNS/broadcast: xem IP xe ở serial lúc boot (`>> OTA san sang ... (IP x.x.x.x)`),
+> điền vào `upload_port`; và nạp IP hub tay bằng `Wh<ip>` + `Ws`.
 
 ## 2. Nạp firmware
 
@@ -35,22 +35,6 @@ pio run -e debug -t upload --upload-port COM5   # qua USB (khi OTA hỏng)
 **Bẫy đã gặp — COM5 "Access denied":** có tiến trình giữ cổng (Serial Monitor trong VS Code,
 hoặc PowerShell mở SerialPort rồi treo). Kill terminal đang treo → **chờ vài giây** cho Windows
 nhả handle → mở lại được. Chỉ 1 chương trình được mở COM tại một thời điểm.
-
-## 0. ⚠️ ĐỌC TRƯỚC — firmware mới CHƯA nạp được lên xe
-
-Lúc dừng việc: **USB đã rút (COM5 không tồn tại)** và **OTA không dùng được** vì xe đang kẹt ở
-trạng thái lỗi mô tả bên dưới. Code đã **commit + biên dịch SUCCESS**, chỉ còn thiếu bước nạp.
-
-**Cách nạp lại (chọn 1):**
-- **Tắt/bật nguồn xe** (khuyên dùng) → boot lại, WiFi lên trong 10s → OTA sống lại →
-  `pio run -e ota -t upload`.
-- Hoặc cắm USB → `pio run -e debug -t upload --upload-port COM5`.
-
-**Bug đã sửa (đang chờ nạp):** WiFi lên **trễ hơn timeout 10s** lúc boot → `wifiOK` kẹt `false`
-**vĩnh viễn**. Hậu quả: xe **có IP, ping được, nhưng hub + OTA + web server không bao giờ chạy**
-(biểu hiện: `source = none` trên web, OTA báo `No response from the ESP`).
-Đã thêm vào `loop()`: cứ 2s kiểm tra, thấy `WiFi.status()==WL_CONNECTED` mà dịch vụ chưa chạy
-thì gọi `onWifiUp()` (bật web + hub + OTA). Kèm `WiFi.setAutoReconnect(true)`.
 
 ## 3. ĐANG DANG DỞ — việc cần làm ngay lần sau
 
@@ -97,7 +81,12 @@ khi đó gyro là nguồn đúng, cứ để `GYRO_W = 0.98`.
 - **MPU6050 chạy:** I2C quét thấy `0x68`, bus SDA(32)/SCL(33) đều mức CAO, trôi tĩnh ≈ 0.
   Không thấy MPU → tự động quay về encoder đơn thuần (không crash).
 - **Bug đã sửa:** lệnh `Ws` thiếu `startOTA()` → boot lỗi WiFi rồi nối lại bằng `Ws` là **mất OTA
-  vĩnh viễn** (biểu hiện: `No response from the ESP`). Đã gọi `startOTA()` sau `setupWiFi()`.
+  vĩnh viễn** (biểu hiện: `No response from the ESP`). Gom việc bật dịch vụ vào `onWifiUp()`.
+- **Bug đã sửa:** WiFi lên **trễ hơn timeout 10s** lúc boot → `wifiOK` kẹt `false` vĩnh viễn →
+  xe **có IP, ping được, nhưng hub/OTA/web không bao giờ chạy** (`source = none`).
+  Nay `loop()` kiểm tra mỗi 2s, WiFi lên là gọi `onWifiUp()`. Kèm `WiFi.setAutoReconnect(true)`.
+- **Hết phải điền IP:** OTA qua `esp32-car.local` (mDNS); xe tự tìm hub qua UDP broadcast
+  port 3003 (đã test: nạp IP sai `.99` → xe tự tìm ra `.32` → lưu NVS → nối lại OK).
 - **Phần cứng:** MUX chỉ dùng CH0–CH7 → **S3 nối GND**, giải phóng GPIO33 làm SCL cho MPU6050
   (SDA=32, SCL=33, AD0=GND, VCC=3.3V). Xem [PINOUT.md](PINOUT.md).
 - **Kích thước xe (đã đo đủ):** bánh Ø70, 2 bánh sau cách 170, caster trước 100,
