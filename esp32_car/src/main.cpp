@@ -185,6 +185,12 @@ const int   INTERSECT_N = 5;      // >= so mat thay den => coi la giao diem (nga
 int    CENTER_OFFSET_MM = 145;    // sau khi thay nga tu, bo them de canh TRUC BANH vao tam
                                   // = k/c thanh cam bien -> truc banh sau (DA DO: 145mm)
 float  centerStartMM = 0;         // moc quang duong khi bat dau bo canh tam
+// Sau khi RE xong, cam bien (truoc truc 145mm) thuong CHUA nam tren nhanh moi.
+// Thay vi XOAY TAI CHO de do (se quet trung nhanh CU -> chay nguoc), ta BO THANG CHAM
+// de dua cam bien len nhanh moi. Khong thay trong REACQUIRE_MAX -> dung an toan.
+int    REACQUIRE_SPEED  = 130;    // toc do bo tim line sau khi re
+int    REACQUIRE_MAX_MM = 220;    // bo toi da bao nhieu mm de tim; qua -> coi nhu that lac
+float  reacqStartMM = 0;
 
 // ===================== Encoder ISR (quadrature) =====================
 void IRAM_ATTR isrEncL() {
@@ -447,25 +453,27 @@ bool computeLineError() {
   return true;
 }
 
-// ===================== Vong dieu khien bam line =====================
-void lineFollowStep() {
-  bool found = computeLineError();
-  if (!found) {
-    // Mat line: quay tai cho theo huong lech cuoi cung de tim lai
-    int dir = (lastError >= 0) ? 1 : -1;
-    driveA(-dir * baseSpeed); driveB(dir * baseSpeed);
-    return;
-  }
-  // PID
+// Chi phan PID + xuat dong co (gia dinh computeLineError() vua tra TRUE).
+void lineDrivePID() {
   errIntegral += lineError;
   errIntegral = constrain(errIntegral, -50, 50);
   float d = lineError - lastError;
   float correction = Kp * lineError + Ki * errIntegral + Kd * d;
   lastError = lineError;
-
   int left  = baseSpeed - (int)correction;   // line lech phai (error>0) -> phai nhanh hon, xe re phai
   int right = baseSpeed + (int)correction;
   driveA(left); driveB(right);
+}
+
+// ===================== Vong dieu khien bam line (che do THU CONG 'g') =====================
+void lineFollowStep() {
+  if (!computeLineError()) {
+    // Mat line: quay tai cho theo huong lech cuoi cung de tim lai
+    int dir = (lastError >= 0) ? 1 : -1;
+    driveA(-dir * baseSpeed); driveB(dir * baseSpeed);
+    return;
+  }
+  lineDrivePID();
 }
 
 // ===================== Re chuan bang PID =====================
@@ -938,7 +946,27 @@ void routeStep() {
     if (deg != 0) turnRelative(deg);          // rE tai cho (PID, blocking)
     segStartX = poseX; segStartY = poseY; leftStart = false;
     lastError = 0; errIntegral = 0;
-    stepPhase = 1;
+    reacqStartMM = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f;
+    stepPhase = 3;                             // -> BO TIM line moi (khong xoay do)
+    return;
+  }
+
+  // --- Pha 3: sau khi re, BO THANG CHAM de dua cam bien len nhanh moi ---
+  if (stepPhase == 3) {
+    computeLineError();                        // cap nhat lineCount/lineLost
+    if (lineCount >= 1 && !lineLost) {         // da bat duoc line moi
+      segStartX = poseX; segStartY = poseY; leftStart = false;
+      lastError = 0; errIntegral = 0;
+      stepPhase = 1;
+      return;
+    }
+    float d = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f - reacqStartMM;
+    if (d > REACQUIRE_MAX_MM) {                // bo qua xa van khong thay -> DUNG AN TOAN
+      stopMotors(); running = false; stepPhase = 0;
+      hubLog("[route] MAT LINE sau khi re (bo " + String((int)d) + "mm khong thay) -> DUNG. Kiem tra goc re / CENTER_OFFSET.");
+      return;
+    }
+    driveA(REACQUIRE_SPEED); driveB(REACQUIRE_SPEED);   // bo thang, KHONG xoay
     return;
   }
 
@@ -950,8 +978,8 @@ void routeStep() {
     return;
   }
 
-  // --- Pha 1: tien bam line den giao diem ke (hoac het line = tam o) ---
-  lineFollowStep();
+  // --- Pha 1: tien bam line den giao diem ke ---
+  bool found = computeLineError();          // cap nhat lineCount/lineLost/lineError
   float trav = hypotf(poseX - segStartX, poseY - segStartY);
   if (!leftStart && lineCount <= 2 && !lineLost) leftStart = true;   // da roi nga tu cu
   bool reached = false;
@@ -959,10 +987,13 @@ void routeStep() {
     if (leftStart && (lineCount >= INTERSECT_N || lineLost)) reached = true;  // toi nga tu / het line
     if (trav > MAX_EDGE) reached = true;                                       // an toan
   }
-  if (reached) {                       // thay nga tu -> chuyen sang bo canh tam (khong re ngay = tranh re som)
+  if (reached) {                       // thay nga tu -> canh tam (khong re ngay = tranh re som)
     centerStartMM = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f;
     stepPhase = 2;
+    return;
   }
+  if (found) lineDrivePID();           // bam line binh thuong
+  else { driveA(REACQUIRE_SPEED); driveB(REACQUIRE_SPEED); }  // hut line giua doan -> bo thang, KHONG xoay
 }
 
 // ===================== Hieu chuan quang duong =====================
@@ -1050,6 +1081,8 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         if (!doc["ppr"].isNull())      ENCODER_PPR = (int)doc["ppr"];
         if (!doc["wbase"].isNull())    WHEEL_BASE_MM = (float)doc["wbase"];
         if (!doc["center"].isNull())   CENTER_OFFSET_MM = constrain((int)doc["center"], 0, 300);
+        if (!doc["reacqmax"].isNull()) REACQUIRE_MAX_MM = constrain((int)doc["reacqmax"], 20, 500);
+        if (!doc["reacqspd"].isNull()) REACQUIRE_SPEED = constrain((int)doc["reacqspd"], 0, 255);
         if (!doc["trim"].isNull())     LINE_TRIM = (float)doc["trim"];
         if (!doc["gyrow"].isNull())    GYRO_W = constrain((float)doc["gyrow"], 0.0f, 1.0f);
         if (!doc["gyrosign"].isNull()) GYRO_SIGN = ((int)doc["gyrosign"] >= 0) ? 1 : -1;
