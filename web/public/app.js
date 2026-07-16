@@ -44,7 +44,7 @@ function applyTune() {
   const o = { cmd: 'tune' };
   const map = { base: 't-base', min: 't-min', kp: 't-kp', kd: 't-kd', speed: 't-speed',
                 turnmin: 't-turnmin', turnmax: 't-turnmax', kpt: 't-kpt', kdt: 't-kdt', turntol: 't-turntol',
-                center: 't-center', gyrow: 't-gyrow', gyrosign: 't-gyrosign' };
+                center: 't-center', gyrow: 't-gyrow', gyrosign: 't-gyrosign', trim: 't-trim' };
   for (const k in map) { const el = document.getElementById(map[k]); if (!el) continue; const v = numVal(map[k]); if (v !== undefined) o[k] = v; }
   send(o);
 }

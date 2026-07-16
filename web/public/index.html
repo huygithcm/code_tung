@@ -90,6 +90,8 @@
       <button class="btn b-go" onclick="gyroCal()">🎯 Đo trôi tĩnh</button>
       <button class="btn b-go" onclick="send({cmd:'i2cscan'})">🔍 Quét I2C</button>
       <button class="btn b-go" onclick="send({cmd:'line'})">📟 Đọc 8 mắt line</button>
+      <label>trim tâm<input id="t-trim" type="number" step="0.25" value="0.5"></label>
+      <button class="btn b-go" onclick="send({cmd:'linezero'})">🎯 Đặt tâm line</button>
       <span class="hint" style="align-self:center">gyroW=1 chỉ tin gyro · 0 chỉ encoder · giữ xe đứng yên khi đo trôi</span>
     </div>
 

@@ -46,6 +46,7 @@ void startHub();
 void startOTA();
 void onWifiUp();
 void saveNetConfig();
+bool computeLineError();
 void hubLog(const String& s);   // in Serial + day log len hub (web doc duoc)
 
 // ===================== Che do build =====================
@@ -143,6 +144,9 @@ float Kp = 25.0, Ki = 0.0, Kd = 15.0;
 float lineError = 0, lastError = 0, errIntegral = 0;
 int   baseSpeed = 200;             // toc do co ban khi bam line (tren nguong khoi dong)
 bool  lineLost = false;            // mat line?
+float LINE_TRIM = 0.5;             // tam that cua mang cam bien (don vi = khoang cach 1 mat).
+                                   // C1 mask -> dung C2..C8 -> tam hinh hoc = +0.5.
+                                   // Dat lai tu dong: de line dung cho muon bam roi gui {"cmd":"linezero"}
 
 // --- Odometry (toa do tuong doi) ---
 float poseX = 0, poseY = 0, poseTheta = 0;   // mm, mm, rad
@@ -341,7 +345,25 @@ void reportLine() {
     if (black) cnt++;
   }
   s += " cnt=" + String(cnt) + (lineCalibrated ? " (da cali)" : " (CHUA cali)");
+  // Sai so sau khi tru trim: 0 = line dung tam. Am = line lech trai, duong = lech phai.
+  if (computeLineError()) s += "  err=" + String(lineError, 2) + " (trim=" + String(LINE_TRIM, 2) + ")";
+  else                    s += "  MAT LINE";
   hubLog(s);
+}
+
+// Dat TAM LINE tu dong: de xe dung cho muon bam (line duoi vi tri chuan) roi goi ham nay.
+// Sai so tho hien tai se thanh moc 0 => het be lech 1 ben.
+void lineSetZero() {
+  float save = LINE_TRIM;
+  LINE_TRIM = 0;                     // do sai so THO (chua tru trim)
+  if (!computeLineError()) {
+    LINE_TRIM = save;
+    hubLog("[linezero] KHONG thay line - dat xe len vach roi thu lai");
+    return;
+  }
+  LINE_TRIM = lineError;             // lay chinh no lam tam
+  hubLog("[linezero] Da dat tam line: trim=" + String(LINE_TRIM, 2) +
+         " (truoc=" + String(save, 2) + "). Gio line o vi tri nay = err 0.");
 }
 
 // Toc do goc hien tai (do/s) tu gyro. 0 neu khong co MPU.
@@ -415,7 +437,10 @@ bool computeLineError() {
   lineCount = cnt;
   if (cnt == 0) { lineLost = true; return false; } // mat line
   lineLost = false;
-  lineError = sum / cnt;                            // vi tri trung binh cua line
+  // Tru LINE_TRIM de dua TAM THAT ve 0. Can thiet vi C1 bi mask -> mang dung duoc
+  // la C2..C8, tam hinh hoc cua no o +0.5 chu khong phai 0; cong them sai lech
+  // co khi gan thanh cam bien. Khong tru -> xe luon be lech 1 ben.
+  lineError = sum / cnt - LINE_TRIM;
   return true;
 }
 
@@ -848,10 +873,15 @@ void doManual(const String& dir) {
   running = false; lineFollow = false; routeTarget = "";
   char d = dir.length() ? dir.charAt(0) : 'S';
   int s = motorSpeed;
+  // !! PHAN CUNG: chan MA_* thuc te chay banh PHAI, MB_* chay banh TRAI (bi trao khi lap).
+  // Da kiem chung: 'F'/'B' khong bi anh huong (2 banh cung chieu);
+  // 'L' cu (A=-1,B=+1) lam xe quay PHAI -> phai doi cho L/R.
+  // turnRelative va lineFollowStep KHONG sua: chung dung driveA/driveB doi xung nen
+  // cai trao nay TU TRIET TIEU (da do: re +90 -> +89.8 do, dung chieu).
   if      (d == 'F') { setMotorA(+1, s); setMotorB(+1, s); }
   else if (d == 'B') { setMotorA(-1, s); setMotorB(-1, s); }
-  else if (d == 'L') { setMotorA(-1, s); setMotorB(+1, s); }
-  else if (d == 'R') { setMotorA(+1, s); setMotorB(-1, s); }
+  else if (d == 'L') { setMotorA(+1, s); setMotorB(-1, s); }   // banh phai tien, banh trai lui
+  else if (d == 'R') { setMotorA(-1, s); setMotorB(+1, s); }   // banh phai lui, banh trai tien
   else stopMotors();
 }
 
@@ -1017,6 +1047,7 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         if (!doc["ppr"].isNull())      ENCODER_PPR = (int)doc["ppr"];
         if (!doc["wbase"].isNull())    WHEEL_BASE_MM = (float)doc["wbase"];
         if (!doc["center"].isNull())   CENTER_OFFSET_MM = constrain((int)doc["center"], 0, 300);
+        if (!doc["trim"].isNull())     LINE_TRIM = (float)doc["trim"];
         if (!doc["gyrow"].isNull())    GYRO_W = constrain((float)doc["gyrow"], 0.0f, 1.0f);
         if (!doc["gyrosign"].isNull()) GYRO_SIGN = ((int)doc["gyrosign"] >= 0) ? 1 : -1;
         hubLog("[tune] base=" + String(baseSpeed) + " min=" + String(MOTOR_MIN_PWM) +
@@ -1052,8 +1083,9 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         hubLog("[gyro] Do troi tinh - GIU XE DUNG YEN...");
         gyroCalibrate();
       }
-      else if (!strcmp(cmd, "i2cscan")) i2cScan();      // quet bus I2C (tim MPU6050)
-      else if (!strcmp(cmd, "line"))    reportLine();   // doc 8 mat line
+      else if (!strcmp(cmd, "i2cscan"))  i2cScan();      // quet bus I2C (tim MPU6050)
+      else if (!strcmp(cmd, "line"))     reportLine();   // doc 8 mat line
+      else if (!strcmp(cmd, "linezero")) lineSetZero();  // dat tam line = vi tri hien tai
       break;
     }
     default: break;
