@@ -99,9 +99,16 @@ bool SENSOR_OK[8] = { false, true, true, true, true, true, true, true };
 // ===================== PWM (LEDC) =====================
 #define PWM_FREQ 5000   // 5 kHz cho motor
 #define PWM_RES  8      // 8-bit -> duty 0..255
+// LEDC: timer = (channel/2) % 4  -> 2 channel lien tiep DUNG CHUNG 1 timer!
+// ESP32Servo tu cap phat tu channel 0 (timer 0) va KHONG biet cac ledcSetup() goi truc tiep.
+//   servo   = ch0        -> timer 0
+//   motor   = ch2, ch3   -> timer 1
+//   buzzer  = ch4        -> timer 2  (PHAI khac timer servo!)
+// Truoc day buzzer = ch1 -> timer 0 = TRUNG timer servo: moi lan beep, ledcSetup doi
+// timer 0 sang tan so beep (8-bit) -> servo mat xung 50Hz -> GIAT/QUAY LOAN.
 #define MA_CH    2      // LEDC channel Motor A (ENA)
 #define MB_CH    3      // LEDC channel Motor B (ENB)
-#define BUZZER_CH 1     // LEDC channel Buzzer (phat tone)
+#define BUZZER_CH 4     // LEDC channel Buzzer (timer 2 - tach khoi servo/motor)
 
 // ===================== Thong so hieu chuan =====================
 // Sua sau khi do thuc te
@@ -143,7 +150,11 @@ long  lastOdoL = 0, lastOdoR = 0;
 
 // --- Re chuan bang PID (quay tai cho theo goc) ---
 float KpT = 200.0, KdT = 35.0;    // he so PID re (autotune: err<1deg, settled ~0.6s)
-float TURN_TOL_DEG = 1.5;         // sai so chap nhan (do)
+float TURN_TOL_DEG = 2.5;         // sai so chap nhan (do). Qua nho (1.5) -> xe khong the
+                                  // nhich tinh den muc do => lac mai khong dat -> timeout.
+float TURN_FINE_DEG = 12.0;       // |err| duoi nguong nay -> chay XUNG NGAN (chong lac)
+int   TURN_PULSE_MS = 35;         //   thoi gian moi xung day
+int   TURN_PAUSE_MS = 120;        //   nghi giua 2 xung cho xe dung han roi do lai
 int   TURN_MIN = 200;             // PWM toi thieu de thang ma sat khi quay (200: giu luc toi sat dich -> re du goc, khong ket o ~45 do)
 int   TURN_MAX = 255;             // PWM toi da khi quay (full PWM de du luc pha ma sat khi chinh)
 bool  turnVerbose = false;        // true = xuat trace step-response (cho autotune)
@@ -333,6 +344,12 @@ void reportLine() {
   hubLog(s);
 }
 
+// Toc do goc hien tai (do/s) tu gyro. 0 neu khong co MPU.
+float gyroRateDps() {
+  if (!mpuOK) return 0;
+  return GYRO_SIGN * (mpuGyroZraw() - gyroBiasZ) / GYRO_LSB_PER_DPS;
+}
+
 // Lay mau gyro va cong don goc. Tu gioi han ~250Hz.
 void updateGyro() {
   if (!mpuOK) return;
@@ -462,12 +479,32 @@ void turnRelative(float deg) {
       if (++settle > 8) { settled = true; break; }  // on dinh ~40ms
     } else {
       settle = 0;
-      float d = err - lastErr;
-      int spd = (int)(KpT * err + KdT * d);
+      float errDeg = fabs(err) * 180.0f / PI;
+      int sgn = INVERT_TURN ? -1 : 1;
+
+      if (errDeg < TURN_FINE_DEG) {
+        // --- VUNG TINH: chay XUNG NGAN roi nghi ---
+        // Ma sat tinh doi PWM >= TURN_MIN (~200) moi quay duoc, nhung 200 lien tuc o
+        // gan dich se VOT LO -> dao chieu -> LAC QUA LAC LAI toi het timeout.
+        // Xung ngan + nghi cho dung han => nhich tung chut, khong lac.
+        int dir = (err >= 0) ? 1 : -1;
+        driveA(sgn * dir * TURN_MIN); driveB(-sgn * dir * TURN_MIN);
+        delay(TURN_PULSE_MS);
+        stopMotors();
+        delay(TURN_PAUSE_MS);            // cho xe dung han roi moi do lai
+        lastErr = err;
+        continue;
+      }
+
+      // --- VUNG THO: PID lien tuc. Ham bang toc do goc gyro (chinh xac hon
+      // dao ham sai so vi khong bi nhieu luong tu hoa encoder). ---
+      float damp;
+      if (mpuOK) damp = -KdT * (gyroRateDps() * PI / 180.0f) * 0.05f;  // theo toc do goc that
+      else       damp =  KdT * (err - lastErr);                        // fallback: dao ham sai so
+      int spd = (int)(KpT * err + damp);
       spd = constrain(spd, -TURN_MAX, TURN_MAX);   // chan toc do -> bot quan tinh/vot lo
       if (abs(spd) < TURN_MIN) spd = (spd >= 0) ? TURN_MIN : -TURN_MIN;
-      int sgn = INVERT_TURN ? -1 : 1;
-      driveA(sgn * spd); driveB(-sgn * spd);   // quay tai cho: 2 banh nguoc chieu
+      driveA(sgn * spd); driveB(-sgn * spd);       // quay tai cho: 2 banh nguoc chieu
     }
     lastErr = err;
     delay(5);
@@ -897,34 +934,46 @@ void routeStep() {
 
 // ===================== Hieu chuan quang duong =====================
 // Chay thang bam line tu giao diem hien tai -> giao diem ke (biet knownMM, mac dinh 475).
-// Do quang duong odometry (trung binh 2 banh) roi goi y WHEEL_DIAMETER da hieu chuan.
+//
+// ⚠️ DAT XE: THANH CAM BIEN phai nam NGAY TREN vach ngang cua nga tu xuat phat
+//    (KHONG phai truc banh!). Ly do: ta dem quang duong tu luc bat dau (cam bien @ nga tu 1)
+//    den luc CAM BIEN thay nga tu 2 -> dung bang 1 canh (475mm). Neu can truc banh vao
+//    nga tu thi cam bien da o truoc 145mm -> do ra ~330mm -> goi y duong kinh sai.
 void calibDistance(float knownMM) {
   running = false; lineFollow = false;
   resetOdometry();
   leftStart = false;
-  hubLog("[caldist] Chay thang toi giao diem ke (biet " + String(knownMM, 0) + "mm)...");
+  hubLog("[caldist] Chay toi nga tu ke (biet " + String(knownMM, 0) +
+         "mm). Luu y: dat THANH CAM BIEN tren nga tu xuat phat.");
 
   unsigned long t0 = millis();
-  auto travel = []() { return (fabs(pulsesToMM(encL)) + fabs(pulsesToMM(encR))) * 0.5f; };  // mm trung binh 2 banh
+  // Quang duong TIEN = trung binh CO DAU cua 2 banh.
+  // (Dung fabs() la SAI: khi mat line xe xoay tai cho -> L am, R duong -> fabs cong don
+  //  thanh "da di xa" du xe dung im -> so do rac.)
+  auto travel = []() { return (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f; };
+  const char* why = "TIMEOUT (khong thay nga tu ke)";   // ly do dung
   while (millis() - t0 < 8000) {                 // timeout 8s
     updateOdometry();
     lineFollowStep();                            // bam line 1 nhip
     float trav = travel();
     if (!leftStart && lineCount <= 2 && !lineLost) leftStart = true;   // da roi giao diem xuat phat
     if (trav > MIN_EDGE) {
-      if (leftStart && (lineCount >= INTERSECT_N || lineLost)) break;  // toi giao diem ke
-      if (trav > MAX_EDGE) break;                                      // an toan
+      if (leftStart && lineCount >= INTERSECT_N) { why = "thay nga tu ke";       break; }
+      if (leftStart && lineLost)                 { why = "MAT LINE (do khong tin)"; break; }
+      if (trav > MAX_EDGE)                       { why = "qua MAX_EDGE (do khong tin)"; break; }
     }
     delay(5);
   }
   stopMotors();
 
   float measured = travel();
-  float suggest  = (measured > 1) ? WHEEL_DIAMETER_MM * knownMM / measured : WHEEL_DIAMETER_MM;
-  char buf[176];
+  bool  ok = (strcmp(why, "thay nga tu ke") == 0) && measured > MIN_EDGE;
+  float suggest = (measured > 1) ? WHEEL_DIAMETER_MM * knownMM / measured : WHEEL_DIAMETER_MM;
+  char buf[220];
   snprintf(buf, sizeof(buf),
-    "[caldist] biet=%.0fmm do=%.1fmm (encL=%ld encR=%ld) | WHEEL_DIAMETER hien=%.2f -> goi y=%.2fmm",
-    knownMM, measured, encL, encR, WHEEL_DIAMETER_MM, suggest);
+    "[caldist] %s | biet=%.0fmm do=%.1fmm (encL=%ld encR=%ld) | WHEEL_D hien=%.2f -> goi y=%.2fmm%s",
+    why, knownMM, measured, encL, encR, WHEEL_DIAMETER_MM, suggest,
+    ok ? "" : "   << KHONG DUNG SO NAY, do lai!");
   hubLog(buf);
 }
 
@@ -961,6 +1010,9 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         if (!doc["kpt"].isNull())      KpT = (float)doc["kpt"];
         if (!doc["kdt"].isNull())      KdT = (float)doc["kdt"];
         if (!doc["turntol"].isNull())  TURN_TOL_DEG = (float)doc["turntol"];
+        if (!doc["fine"].isNull())     TURN_FINE_DEG = (float)doc["fine"];
+        if (!doc["pulse"].isNull())    TURN_PULSE_MS = constrain((int)doc["pulse"], 5, 200);
+        if (!doc["pause"].isNull())    TURN_PAUSE_MS = constrain((int)doc["pause"], 20, 500);
         if (!doc["wheeld"].isNull())   WHEEL_DIAMETER_MM = (float)doc["wheeld"];
         if (!doc["ppr"].isNull())      ENCODER_PPR = (int)doc["ppr"];
         if (!doc["wbase"].isNull())    WHEEL_BASE_MM = (float)doc["wbase"];
@@ -971,7 +1023,9 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
                " kp=" + String(Kp, 1) + " kd=" + String(Kd, 1) +
                " turnmin=" + String(TURN_MIN) + " turnmax=" + String(TURN_MAX) +
                " kpt=" + String(KpT, 1) + " kdt=" + String(KdT, 1) +
-               " tol=" + String(TURN_TOL_DEG, 1) + " speed=" + String(motorSpeed) +
+               " tol=" + String(TURN_TOL_DEG, 1) + " fine=" + String(TURN_FINE_DEG, 0) +
+               " pulse=" + String(TURN_PULSE_MS) + " pause=" + String(TURN_PAUSE_MS) +
+               " speed=" + String(motorSpeed) +
                " wheeld=" + String(WHEEL_DIAMETER_MM, 2) + " ppr=" + String(ENCODER_PPR) +
                " wbase=" + String(WHEEL_BASE_MM, 1) + " center=" + String(CENTER_OFFSET_MM) +
                " gyro=" + String(mpuOK ? "OK" : "--") + " gyrow=" + String(GYRO_W, 2) +
@@ -1036,11 +1090,14 @@ void startOTA() {
   Serial.printf(">> OTA san sang: pio run -e ota -t upload  (IP %s)\n", WiFi.localIP().toString().c_str());
 }
 
+bool hubStarted = false;          // da goi wsClient.begin() chua
+
 void startHub() {
   if (!wifiOK) return;
   wsClient.begin(cfgHub.c_str(), HUB_PORT, "/");
   wsClient.onEvent(onWsEvent);
   wsClient.setReconnectInterval(3000);
+  hubStarted = true;
   Serial.printf(">> Ket noi hub  ws://%s:%d\n", cfgHub.c_str(), HUB_PORT);
 }
 
@@ -1065,13 +1122,19 @@ void discoverHub() {
       if (sp > 0) ip = ip.substring(0, sp);
       ip.trim();
       if (ip.length()) {
-        buzzerTone(2600, 60); delay(60); buzzerTone(3200, 90);   // 2 bip len giong = DA TIM THAY
-        if (ip != cfgHub) {
+        if (ip != cfgHub) {                        // hub doi IP -> luu & noi lai
+          buzzerTone(2600, 60); delay(60); buzzerTone(3200, 90);   // 2 bip len giong = DA TIM THAY
           hubLog("[disc] Tim thay hub moi: " + ip + " (cu: " + cfgHub + ") -> luu & noi lai");
           cfgHub = ip;
           saveNetConfig();
+          wsClient.disconnect();
+          startHub();
+        } else if (!hubStarted) {                  // dung IP, chi la chua khoi dong client
+          buzzerTone(2600, 60); delay(60); buzzerTone(3200, 90);
+          startHub();
         }
-        startHub();
+        // Neu da begin() dung IP roi -> KHONG goi lai. wsClient tu retry moi 3s.
+        // (Goi begin() lap lai se cat ngang bat tay dang do -> KHONG BAO GIO noi duoc.)
       }
       return;
     }
@@ -1085,7 +1148,10 @@ void discoverHub() {
   disc.beginPacket(bc, DISC_PORT);
   disc.print("CAR_WHO?");
   disc.endPacket();
-  buzzerTone(1500, 25);                          // bip ngan, tram = dang tim
+  // bip ngan, tram = dang tim (thua dan: chi bip 3 lan dau roi moi ~15s 1 lan cho do on)
+  static int askN = 0;
+  askN++;
+  if (askN <= 3 || askN % 5 == 0) buzzerTone(1500, 25);
 }
 
 // Bat toan bo dich vu mang khi WiFi da len. Goi 1 lan (duoc gac boi wifiOK).
