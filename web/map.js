@@ -9,7 +9,9 @@
 
 const CELL_W = 500;   // bước ngang giữa 2 đường dọc (mm)  (~498.56)
 const CELL_H = 475;   // bước dọc giữa 2 đường ngang (mm)
-const STUB   = 200;   // chiều dài nhánh HOME thò ra khỏi lưới (mm)
+// Nhánh HOME dài ĐÚNG 1 Ô (đo thực tế), không phải 200mm như bản cũ.
+// Nhánh nằm NGANG nên lấy CELL_W.
+const STUB   = CELL_W;   // chiều dài nhánh HOME thò ra khỏi lưới (mm) = 500
 
 // 4 đường dọc (x): lưới bắt đầu ngay sau nhánh HOME (x = STUB).
 const COLS = [STUB, STUB + CELL_W, STUB + 2 * CELL_W, STUB + 3 * CELL_W]; // [200,700,1200,1700]

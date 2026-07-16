@@ -70,7 +70,7 @@ Trong code: C1→C8 = CH0→CH7 = `sensor[0..7]` (trái → phải).
 
 | Tham số | Biến trong code | Giá trị | Trạng thái |
 |---|---|---|---|
-| Đường kính bánh (mm) | `WHEEL_DIAMETER_MM` | **70.0** | ✅ đã đo |
+| Đường kính bánh (mm) | `WHEEL_DIAMETER_MM` | **71.4** | ✅ đo bằng `caldist` (xem ghi chú dưới) |
 | Số xung/vòng | `ENCODER_PPR` | **370** | ✅ đã đo |
 | Khoảng cách tâm 2 bánh sau (mm) | `WHEEL_BASE_MM` | **170.0** | ✅ đã đo |
 | Trục bánh sau → bánh tự do (mm) | `CASTER_DIST_MM` | **100.0** | ✅ đã đo |
@@ -108,6 +108,27 @@ Kết quả đo sau hiệu chuẩn: rẽ **+90° → 89.94°** (sai số 0.06°)
 Công thức hợp nhất mỗi nhịp:
 `Δθ = GYRO_W·Δθ_gyro + (1−GYRO_W)·Δθ_encoder` — gyro không bị trượt bánh, encoder chống trôi dài hạn.
 Nếu không thấy MPU6050 → tự động quay về **encoder đơn thuần** (không crash).
+
+### Ghi chú hiệu chuẩn `WHEEL_DIAMETER_MM` (đo bằng `caldist`, cạnh 475mm)
+
+| Lần | encL / encR | Xung TB | mm/xung | → Ø |
+|---|---|---|---|---|
+| 1 | 787 / 757 | 772 | 0.6153 | 72.46 |
+| 2 | 997 / **1444** | — | — | ❌ **loại** (xe lạc, quá MAX_EDGE) |
+| 3 | 817 / 772 | 794.5 | 0.5979 | 70.41 |
+
+→ Lấy trung bình: **71.4mm**. **Sai số lặp ~3%** vì xe **lượn** khi bám line ⇒ quãng đường
+thực đi dài hơn đường thẳng ⇒ Ø tính ra nhỏ hơn thật (lượn càng nhiều, Ø càng nhỏ).
+Muốn chính xác hơn: giảm lượn (tune Kp/Kd) rồi đo lại, hoặc đo trên đoạn thẳng dài đã biết.
+Sai số này được **reset tại mỗi giao điểm** (sensor fusion) nên không tích lũy.
+
+> ⚠️ **`LINE_TRIM = 1.0`** — tâm mảng cảm biến KHÔNG ở 0. Do C1 bị mask (mảng dùng được là
+> C2–C8 → tâm hình học +0.5) cộng gá lệch (~+0.5). Không trừ trim → xe **luôn bẻ lệch 1 bên**.
+> Đặt lại bằng nút **🎯 Đặt tâm line** trên web (để line đúng chỗ muốn bám rồi bấm).
+
+> ⚠️ **Motor A/B bị TRÁO khi lắp**: chân `MA_*` thực tế chạy bánh **PHẢI**, `MB_*` chạy bánh
+> **TRÁI**. Chỉ `doManual` phải đổi chỗ L/R. `turnRelative` và `lineFollowStep` dùng
+> `driveA`/`driveB` đối xứng nên cái tráo **tự triệt tiêu** — **ĐỪNG "sửa" chúng**.
 
 ### Hằng số odometry suy ra
 ```

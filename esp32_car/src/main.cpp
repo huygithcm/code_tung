@@ -113,7 +113,10 @@ bool SENSOR_OK[8] = { false, true, true, true, true, true, true, true };
 
 // ===================== Thong so hieu chuan =====================
 // Sua sau khi do thuc te
-float WHEEL_DIAMETER_MM = 70.0;   // duong kinh banh (mm)
+float WHEEL_DIAMETER_MM = 71.4;   // duong kinh banh HIEU DUNG (mm) - do bang caldist tren 1 canh
+                                  // 475mm: lan1 772 xung -> 72.46 ; lan3 794.5 xung -> 70.41.
+                                  // Lay trung binh 71.4. Sai so lap ~3% do xe LUON khi bam line
+                                  // (luon nhieu -> quang duong dai hon -> Ø tinh ra nho hon).
 int   ENCODER_PPR       = 370;    // so xung / vong
 float WHEEL_BASE_MM     = 170.0;  // khoang cach tam 2 banh sau (mm)
 float CASTER_DIST_MM    = 100.0;  // khoang cach truc banh sau -> banh tu do (mm)
