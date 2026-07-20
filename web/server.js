@@ -106,7 +106,7 @@ function dispatch(target, qr) {
 
   if (carSocket && carSocket.readyState === 1) {
     // Có xe thật → gửi chuỗi lệnh tương đối
-    carSocket.send(JSON.stringify({ cmd: 'route', target, steps: plan.steps }));
+    carSocket.send(JSON.stringify({ cmd: 'route', target, steps: plan.steps, dists: plan.dists }));
     state.source = 'car';
     state.status = 'moving'; state.node = target; pushState();
   } else {
@@ -200,6 +200,10 @@ function onConnection(ws) {
       case 'linezero':                                  // đặt tâm line = vị trí hiện tại
         if (carSocket && carSocket.readyState === 1) carSocket.send(JSON.stringify(m));
         else logEvent('⚠️ Chưa có xe kết nối');
+        break;
+      case 'servo':                                     // test servo tay (không qua logic thả hàng)
+        if (carSocket && carSocket.readyState === 1) carSocket.send(JSON.stringify(m));
+        else logEvent('⚠️ Chưa có xe để test servo');
         break;
     }
   });

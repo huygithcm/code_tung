@@ -43,8 +43,11 @@ function numVal(id) { const v = parseFloat(document.getElementById(id).value); r
 function applyTune() {
   const o = { cmd: 'tune' };
   const map = { base: 't-base', min: 't-min', kp: 't-kp', kd: 't-kd', speed: 't-speed',
-                turnmin: 't-turnmin', turnmax: 't-turnmax', kpt: 't-kpt', kdt: 't-kdt', turntol: 't-turntol',
-                center: 't-center', gyrow: 't-gyrow', gyrosign: 't-gyrosign', trim: 't-trim' };
+                openpwm: 't-openpwm',
+                msperdegL: 't-msperdegL', msperdegR: 't-msperdegR',
+                msoffsetL: 't-msoffsetL', msoffsetR: 't-msoffsetR',
+                center: 't-center', intersectn: 't-intersectn',
+                gyrow: 't-gyrow', gyrosign: 't-gyrosign', trim: 't-trim' };
   for (const k in map) { const el = document.getElementById(map[k]); if (!el) continue; const v = numVal(map[k]); if (v !== undefined) o[k] = v; }
   send(o);
 }
@@ -52,6 +55,8 @@ function applyWheel() { const d = numVal('t-wheeld'); if (d !== undefined) send(
 function testTurn() { const d = numVal('t-deg'); if (d !== undefined) send({ cmd: 'turn', deg: d }); }
 function calDist() { const k = numVal('t-known'); send({ cmd: 'caldist', known: k === undefined ? 475 : k }); }
 function gyroCal() { if (confirm('Giữ xe ĐỨNG YÊN trong ~1s để đo trôi tĩnh gyro. Bắt đầu?')) send({ cmd: 'gyrocal' }); }
+function servoTest(action) { send({ cmd: 'servo', action }); }
+function servoAngle() { const a = numVal('t-servoangle'); if (a !== undefined) send({ cmd: 'servo', angle: a }); }
 
 // ---------- Tải hình học map rồi vẽ ----------
 fetch('/map').then(r => r.json()).then(m => { MAP = m; buildGoButtons(); draw(); });
@@ -86,9 +91,11 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
   if (!MAP) return;
   const b = bounds();
-  const sc = Math.min((W - 2 * pad) / (b.maxx - b.minx), (H - 2 * pad) / (b.maxy - b.miny));
-  const cx = p => pad + (p.x - b.minx) * sc;
-  const cy = p => H - (pad + (p.y - b.miny) * sc);
+  // Hiển thị xoay 90° NGƯỢC chiều kim đồng hồ: world+x → LÊN, world+y → TRÁI.
+  // => HOME (0,0) rơi vào góc PHẢI-DƯỚI màn hình. Vì xoay 90° nên khổ x/y đổi chỗ.
+  const sc = Math.min((W - 2 * pad) / (b.maxy - b.miny), (H - 2 * pad) / (b.maxx - b.minx));
+  const cx = p => pad + (b.maxy - p.y) * sc;
+  const cy = p => pad + (b.maxx - p.x) * sc;
   const { cols, rows, stubs, points } = MAP;
 
   // cạnh lưới
@@ -177,7 +184,7 @@ function drawCar(g, px, py, th, sc) {
   const S = mm => mm * sc;
   g.save();
   g.translate(px, py);
-  g.rotate(-th);            // canvas y hướng xuống → xoay -th; local +x = hướng xe, +y = bên phải
+  g.rotate(-th - Math.PI / 2);  // -th cho hệ world; -90° do màn hình xoay 90° CCW (world+x → LÊN)
 
   // --- thân xe ---
   g.fillStyle = st.cargo ? 'rgba(45,156,223,0.18)' : 'rgba(155,89,182,0.18)';
