@@ -1,6 +1,7 @@
 # Node
 node_modules/
 web/goods.json
+web/routes.json
 web/*.log
 
 # PlatformIO / build

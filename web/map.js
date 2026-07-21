@@ -98,14 +98,17 @@ function pathToWaypoints(ids) {
 
 // Đổi chuỗi waypoint → lệnh tương đối F/L/R cho xe (GĐ E5 của PLAN).
 // heading0: hướng xuất phát ở HOME = +x (0°), vì HOME ở cạnh trái nhìn vào lưới.
-// Trả về { steps, dists }: dists[i] = khoảng cách (mm) kỳ vọng cho steps[i] nếu là 'F'
-// (0 cho L/R/B/DROP/HOME). Các đoạn 'F' liên tiếp cùng hướng được GỘP làm 1 bước (giao
-// điểm giữa đường là điểm trung gian, không cần rẽ) NHƯNG vẫn cộng dồn khoảng cách thật -
-// xe dùng khoảng cách này làm ngưỡng tối thiểu trước khi chấp nhận "đã tới giao điểm",
+// Trả về { steps, dists, targetsXY }:
+//  - dists[i] = khoảng cách (mm) kỳ vọng cho steps[i] nếu là 'F' (0 cho L/R/B/DROP/HOME).
+//  - targetsXY[i] = toạ độ {x,y} xe PHẢI tới sau khi hoàn tất steps[i] (để server kiểm tra trôi).
+// Các đoạn 'F' liên tiếp cùng hướng được GỘP làm 1 bước (giao điểm giữa đường là điểm trung
+// gian, không cần rẽ) NHƯNG vẫn cộng dồn khoảng cách thật + cập nhật targetsXY tới waypoint
+// cuối cụm - xe dùng dists làm ngưỡng tối thiểu trước khi chấp nhận "đã tới giao điểm",
 // để không dừng nhầm ngay tại 1 giao điểm MẠNH nằm giữa đường (trước đích thật).
 function waypointsToSteps(wps, dropAt) {
   const steps = [];
   const dists = [];
+  const targetsXY = [];
   let heading = 0;  // độ, +x = 0°
   for (let i = 1; i < wps.length; i++) {
     const dx = wps[i].x - wps[i - 1].x, dy = wps[i].y - wps[i - 1].y;
@@ -113,18 +116,24 @@ function waypointsToSteps(wps, dropAt) {
     if (segLen < 1) continue;
     let dir = Math.round(Math.atan2(dy, dx) * 180 / Math.PI);
     let turn = ((dir - heading + 540) % 360) - 180;   // [-180,180]
+    const here = { x: wps[i].x, y: wps[i].y };
     if (Math.abs(turn) < 15) {
-      if (steps.length && steps[steps.length - 1] === 'F') dists[dists.length - 1] += segLen;
-      else { steps.push('F'); dists.push(segLen); }
+      if (steps.length && steps[steps.length - 1] === 'F') {
+        dists[dists.length - 1] += segLen;
+        targetsXY[targetsXY.length - 1] = here;        // gộp F → cập nhật đích tới waypoint cuối cụm
+      } else { steps.push('F'); dists.push(segLen); targetsXY.push(here); }
     }
-    else if (Math.abs(turn - 90) < 45) { steps.push('L'); dists.push(0); }
-    else if (Math.abs(turn + 90) < 45) { steps.push('R'); dists.push(0); }
-    else { steps.push('B'); dists.push(0); }           // quay đầu 180°
+    // L/R/B: sau khi rẽ vẫn ĐI 1 ĐOẠN (segLen) tới node kế → dist = segLen (KHÔNG phải 0).
+    // Trước đây để 0 khiến firmware dùng ngưỡng cố định MIN_EDGE=120mm; đoạn rẽ ngắn
+    // (vd 237mm) có điểm phát hiện giao điểm < 120mm nên bị ngưỡng chặn → xe vọt qua node.
+    else if (Math.abs(turn - 90) < 45) { steps.push('L'); dists.push(segLen); targetsXY.push(here); }
+    else if (Math.abs(turn + 90) < 45) { steps.push('R'); dists.push(segLen); targetsXY.push(here); }
+    else { steps.push('B'); dists.push(segLen); targetsXY.push(here); }   // quay đầu 180°
     heading = dir;
-    if (dropAt && wps[i].id === dropAt) { steps.push('DROP'); dists.push(0); }
+    if (dropAt && wps[i].id === dropAt) { steps.push('DROP'); dists.push(0); targetsXY.push(here); }
   }
-  steps.push('HOME'); dists.push(0);
-  return { steps, dists };
+  steps.push('HOME'); dists.push(0); targetsXY.push({ x: 0, y: 0 });
+  return { steps, dists, targetsXY };
 }
 
 // Lập kế hoạch giao 1 điểm: HOME → đích → HOME. Trả waypoints + steps.
@@ -138,8 +147,8 @@ function planDelivery(target) {
   const back = out.slice().reverse();
   const ids = out.concat(back.slice(1));
   const wps = pathToWaypoints(ids);
-  const { steps, dists } = waypointsToSteps(wps, target);
-  return { target, ids, waypoints: wps, steps, dists };
+  const { steps, dists, targetsXY } = waypointsToSteps(wps, target);
+  return { target, ids, waypoints: wps, steps, dists, targetsXY };
 }
 
 module.exports = {

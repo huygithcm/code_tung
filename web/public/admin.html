@@ -30,6 +30,29 @@
       <tbody id="rows"></tbody>
     </table>
   </section>
+
+  <section class="panel">
+    <h2>🔧 Tinh chỉnh route thủ công (ghi đè tự động)</h2>
+    <p class="hint">Mỗi bước cách nhau khoảng trắng: F L R B DROP HOME. Bước F có thể kèm số mm
+      (vd <code>F500</code>) để báo khoảng cách kỳ vọng — không kèm số = xe dùng ngưỡng mặc định.</p>
+    <div class="row">
+      <select id="rnode"></select>
+      <button class="btn b-go" id="rload">Nạp route tự động hiện tại</button>
+    </div>
+    <textarea id="rtext" rows="3" style="width:100%;font-family:monospace;font-size:1em;margin-top:8px"
+      placeholder="F L R F R DROP B L F L R HOME"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="btn b-go" id="rsave">💾 Lưu route thủ công</button>
+      <button class="btn b-stop" id="rclear">↩️ Xóa (dùng lại tự động)</button>
+    </div>
+    <div id="rmsg" class="qr-result">—</div>
+
+    <h3>Các node đang dùng route thủ công</h3>
+    <table class="tbl">
+      <thead><tr><th>Node</th><th>Steps</th><th></th></tr></thead>
+      <tbody id="rrows"></tbody>
+    </table>
+  </section>
 </main>
 
 <script src="admin.js"></script>

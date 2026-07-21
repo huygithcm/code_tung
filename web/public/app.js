@@ -39,24 +39,10 @@ function calibLine() {
   if (confirm('Calib line: khi nghe TONE bắt đầu, quét thanh cảm biến qua vạch đen & nền trắng trong 5s. Bắt đầu?'))
     send({ cmd: 'calib' });
 }
-function numVal(id) { const v = parseFloat(document.getElementById(id).value); return isNaN(v) ? undefined : v; }
-function applyTune() {
-  const o = { cmd: 'tune' };
-  const map = { base: 't-base', min: 't-min', kp: 't-kp', kd: 't-kd', speed: 't-speed',
-                openpwm: 't-openpwm',
-                msperdegL: 't-msperdegL', msperdegR: 't-msperdegR',
-                msoffsetL: 't-msoffsetL', msoffsetR: 't-msoffsetR',
-                center: 't-center', intersectn: 't-intersectn',
-                gyrow: 't-gyrow', gyrosign: 't-gyrosign', trim: 't-trim' };
-  for (const k in map) { const el = document.getElementById(map[k]); if (!el) continue; const v = numVal(map[k]); if (v !== undefined) o[k] = v; }
-  send(o);
-}
-function applyWheel() { const d = numVal('t-wheeld'); if (d !== undefined) send({ cmd: 'tune', wheeld: d }); }
-function testTurn() { const d = numVal('t-deg'); if (d !== undefined) send({ cmd: 'turn', deg: d }); }
-function calDist() { const k = numVal('t-known'); send({ cmd: 'caldist', known: k === undefined ? 475 : k }); }
 function gyroCal() { if (confirm('Giữ xe ĐỨNG YÊN trong ~1s để đo trôi tĩnh gyro. Bắt đầu?')) send({ cmd: 'gyrocal' }); }
 function servoTest(action) { send({ cmd: 'servo', action }); }
-function servoAngle() { const a = numVal('t-servoangle'); if (a !== undefined) send({ cmd: 'servo', angle: a }); }
+// Đặt lại odometry về HOME (0,0,0) — bấm SAU khi đã đặt xe đúng HOME trên vạch, để map khớp xe thật.
+function resetPose() { send({ cmd: 'enc', reset: true }); }
 
 // ---------- Tải hình học map rồi vẽ ----------
 fetch('/map').then(r => r.json()).then(m => { MAP = m; buildGoButtons(); draw(); });
@@ -286,9 +272,13 @@ function showDims() { const el = document.getElementById('dims'); return !el || 
 // ---------- Trạng thái + log ----------
 function renderStatus() {
   const s = st;
+  const stepLine = s.step
+    ? `bước <b class="k">${s.step.idx + 1}/${s.step.total}</b>: ${s.step.action}<br>`
+    : '';
   document.getElementById('status').innerHTML =
     `trạng thái: <b class="k">${(s.status || '').toUpperCase()}</b>  ` +
     `nguồn: ${s.source === 'car' ? '🚗 xe thật' : '⚠️ chưa có xe'}<br>` +
+    stepLine +
     `điểm đến: <b class="k">${s.node || '—'}</b>  hàng: ${s.cargo ? '📦 còn' : '✅ đã thả'}<br>` +
     `x=${s.pos.x.toFixed(0)} mm  y=${s.pos.y.toFixed(0)} mm  θ=${(s.pos.th || 0).toFixed(0)}°`;
 }

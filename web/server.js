@@ -26,6 +26,7 @@ function lanIPs() {
 const cfg = require('./config');
 const map = require('./map');
 const store = require('./store');
+const routesOverride = require('./routes-override');
 
 const app = express();
 app.use(express.json());
@@ -58,6 +59,29 @@ app.delete('/api/goods/:code', (req, res) => {
   res.json({ ok });
 });
 
+// ---- API route thủ công cho từng node (ghi đè Dijkstra tự động) ----
+app.get('/api/routes', (_req, res) => res.json(routesOverride.list()));
+app.get('/api/routes/auto/:node', (req, res) => {   // route tự động hiện tại (để làm điểm khởi đầu chỉnh tay)
+  const plan = map.planDelivery(req.params.node);
+  if (!plan) return res.status(400).json({ error: 'Không tìm được đường' });
+  res.json({ steps: plan.steps, dists: plan.dists });
+});
+app.post('/api/routes', (req, res) => {
+  try {
+    const { node, text } = req.body || {};
+    if (!map.POINTS[node] || node === 'HOME') return res.status(400).json({ error: 'Điểm giao không hợp lệ' });
+    const { steps, dists } = routesOverride.parseSteps(text);
+    const item = routesOverride.set(node, steps, dists);
+    logEvent(`🛠️ Admin: lưu route thủ công cho ${node} | ${steps.join(' ')}`);
+    res.json(item);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+app.delete('/api/routes/:node', (req, res) => {
+  const ok = routesOverride.remove(req.params.node);
+  if (ok) logEvent(`🛠️ Admin: xóa route thủ công cho ${req.params.node} (dùng lại tự động)`);
+  res.json({ ok });
+});
+
 // Server HTTPS được tạo bất đồng bộ trong boot() ở cuối file (cert tự ký async).
 const ips = lanIPs();
 let server, wss;
@@ -71,6 +95,7 @@ const state = {
   pos: { x: 0, y: 0, th: 0 },       // vị trí xe (mm); HOME nhìn sang +x → θ=0
   cargo: true,                      // IR: còn hàng?
   source: 'none',
+  step: null,                       // điều phối từng bước: { idx, total, action } hoặc null
   log: [],                          // lịch sử giao hàng
   carlog: [],                       // log thô từ xe ESP32 (cửa sổ "Log xe")
 };
@@ -95,26 +120,104 @@ function addCarLog(text) {
   broadcast({ type: 'carlog', entry: e });
 }
 
-// ---- Định tuyến + điều phối 1 đơn giao hàng ----
+// ---- Điều phối TỪNG BƯỚC: server gửi 1 bước, xe báo stepdone, server gửi bước kế ----
+// activeRoute giữ toàn bộ chuỗi bước + con trỏ; server là "bộ não" quyết định bước kế dựa
+// trên vị trí (odometry) xe báo về, đối chiếu với node kỳ vọng (targetsXY) để kiểm tra trôi.
+let activeRoute = null;   // { target, steps, dists, targetsXY, idx, seq, timer }
+const DRIFT_ABORT_MM = 250;    // lệch vị trí quá ngưỡng này sau 1 bước -> dừng an toàn
+const STEP_TIMEOUT_MS = 15000; // xe không báo xong 1 bước trong thời gian này -> coi như treo, dừng
+
+function clearActiveRoute() {
+  if (activeRoute && activeRoute.timer) clearTimeout(activeRoute.timer);
+  activeRoute = null;
+  state.step = null;
+}
+
+// Gửi bước kế (theo con trỏ idx). Hết bước -> kết thúc chuyến.
+function sendNextStep() {
+  if (!activeRoute) return;
+  const r = activeRoute;
+  if (r.idx >= r.steps.length) {
+    logEvent(`✅ ${r.target}: xong → về HOME, sẵn sàng`);
+    clearActiveRoute();
+    state.status = 'idle'; state.node = null; state.step = null; pushState();
+    return;
+  }
+  if (!(carSocket && carSocket.readyState === 1)) { logEvent('⚠️ Mất xe giữa chừng'); clearActiveRoute(); return; }
+  const action = r.steps[r.idx];
+  const dist = r.dists ? (r.dists[r.idx] || 0) : 0;
+  r.seq = r.idx;
+  state.step = { idx: r.idx, total: r.steps.length, action };
+  carSocket.send(JSON.stringify({ cmd: 'step', seq: r.idx, action, dist }));
+  pushState();
+  if (r.timer) clearTimeout(r.timer);
+  r.timer = setTimeout(() => {
+    logEvent(`⏱️ ${r.target}: xe không báo xong bước ${r.idx} (${action}) sau ${STEP_TIMEOUT_MS / 1000}s → DỪNG`);
+    manual({ cmd: 'stop' });
+    clearActiveRoute();
+    state.status = 'error'; pushState();
+  }, STEP_TIMEOUT_MS);
+}
+
+// Xe báo xong 1 bước: kiểm tra ok + trôi, rồi gửi bước kế.
+function onStepDone(m) {
+  if (!activeRoute) return;
+  const r = activeRoute;
+  if (m.seq !== r.seq) return;   // stepdone lạc (của bước cũ) -> bỏ
+  if (r.timer) { clearTimeout(r.timer); r.timer = null; }
+  if (m.pos) state.pos = m.pos;
+
+  if (!m.ok) {
+    logEvent(`❌ ${r.target} bước ${m.seq} (${m.action}) LỖI: ${m.reason}`);
+    clearActiveRoute();
+    state.status = 'error'; pushState();
+    return;
+  }
+
+  // Kiểm tra trôi: so vị trí xe với node kỳ vọng (chỉ khi có targetsXY - route tự động).
+  if (r.targetsXY && r.targetsXY[r.idx] && m.pos) {
+    const exp = r.targetsXY[r.idx];
+    const drift = Math.hypot(m.pos.x - exp.x, m.pos.y - exp.y);
+    logEvent(`↳ bước ${m.seq} ${m.action} xong · xe(${m.pos.x},${m.pos.y}) vs node(${exp.x},${Math.round(exp.y)}) · lệch ${Math.round(drift)}mm`);
+    if (drift > DRIFT_ABORT_MM) {
+      logEvent(`⚠️ ${r.target}: lệch ${Math.round(drift)}mm > ${DRIFT_ABORT_MM}mm → DỪNG (kiểm tra hiệu chuẩn)`);
+      manual({ cmd: 'stop' });
+      clearActiveRoute();
+      state.status = 'error'; pushState();
+      return;
+    }
+  }
+
+  r.idx++;
+  sendNextStep();
+}
+
+// ---- Định tuyến + bắt đầu 1 đơn giao hàng (gửi bước đầu tiên) ----
 function dispatch(target, qr) {
   if (!map.POINTS[target]) { logEvent(`❌ Điểm không hợp lệ: ${target}`); return; }
-  const plan = map.planDelivery(target);
-  if (!plan) { logEvent(`❌ Không tìm được đường tới ${target}`); return; }
+  clearActiveRoute();
 
-  logEvent(`📦 ${qr ? `QR "${qr}" → ` : ''}giao ${target} | steps: ${plan.steps.join(' ')}`);
+  const manual0 = routesOverride.get(target);
+  let plan;
+  if (manual0) {
+    plan = { target, steps: manual0.steps, dists: manual0.dists, targetsXY: null, waypoints: null };
+    logEvent(`📦 ${qr ? `QR "${qr}" → ` : ''}giao ${target} (route thủ công) | steps: ${plan.steps.join(' ')}`);
+  } else {
+    plan = map.planDelivery(target);
+    if (!plan) { logEvent(`❌ Không tìm được đường tới ${target}`); return; }
+    logEvent(`📦 ${qr ? `QR "${qr}" → ` : ''}giao ${target} | steps: ${plan.steps.join(' ')}`);
+  }
   broadcast({ type: 'route', plan });   // web vẽ đường
 
-  if (carSocket && carSocket.readyState === 1) {
-    // Có xe thật → gửi chuỗi lệnh tương đối
-    carSocket.send(JSON.stringify({ cmd: 'route', target, steps: plan.steps, dists: plan.dists }));
-    state.source = 'car';
-    state.status = 'moving'; state.node = target; pushState();
-  } else {
-    logEvent('⚠️ Chưa có xe kết nối');
-  }
+  if (!(carSocket && carSocket.readyState === 1)) { logEvent('⚠️ Chưa có xe kết nối'); return; }
+  activeRoute = { target, steps: plan.steps, dists: plan.dists, targetsXY: plan.targetsXY, idx: 0, seq: -1, timer: null };
+  state.source = 'car';
+  state.status = 'moving'; state.node = target; pushState();
+  sendNextStep();   // gửi bước đầu tiên (seq 0 -> xe reset odometry tại HOME)
 }
 
 function manual(cmd) {
+  clearActiveRoute();   // can thiệp tay -> huỷ điều phối tự động đang chạy
   if (carSocket && carSocket.readyState === 1) {
     carSocket.send(JSON.stringify(cmd));
   }
@@ -140,6 +243,9 @@ function onConnection(ws) {
 
     // Log thô từ xe → cửa sổ "Log xe" trên web
     if (ws._role === 'car' && m.type === 'clog') { addCarLog(m.text); return; }
+
+    // Xe báo xong 1 bước → server quyết định bước kế (điều phối từng bước)
+    if (ws._role === 'car' && m.type === 'stepdone') { onStepDone(m); return; }
 
     // Trạng thái từ xe thật → cập nhật + phát cho web (PLAN: xe→web)
     if (ws._role === 'car') {
@@ -212,6 +318,7 @@ function onConnection(ws) {
     clients.delete(ws);
     if (ws === carSocket) {
       carSocket = null; state.source = 'none';
+      clearActiveRoute();          // mất xe -> huỷ điều phối đang chạy
       logEvent('🚗 ESP32 ngắt kết nối');
     }
   });

@@ -112,11 +112,8 @@ bool SENSOR_OK[8] = { false, true, true, true, true, true, true, true };
 #define BUZZER_CH 4     // LEDC channel Buzzer (timer 2 - tach khoi servo/motor)
 
 // ===================== Thong so hieu chuan =====================
-// Sua sau khi do thuc te
-float WHEEL_DIAMETER_MM = 71.4;   // duong kinh banh HIEU DUNG (mm) - do bang caldist tren 1 canh
-                                  // 475mm: lan1 772 xung -> 72.46 ; lan3 794.5 xung -> 70.41.
-                                  // Lay trung binh 71.4. Sai so lap ~3% do xe LUON khi bam line
-                                  // (luon nhieu -> quang duong dai hon -> Ø tinh ra nho hon).
+// Sua sau khi do thuc te. GIA TRI DA HIEU CHUAN (bake tu thong so chay tot tren web).
+float WHEEL_DIAMETER_MM = 74.0;   // duong kinh banh HIEU DUNG (mm) - hieu chuan thuc te = 74.0
 int   ENCODER_PPR       = 370;    // so xung / vong
 float WHEEL_BASE_MM     = 170.0;  // khoang cach tam 2 banh sau (mm)
 float CASTER_DIST_MM    = 100.0;  // khoang cach truc banh sau -> banh tu do (mm)
@@ -170,14 +167,17 @@ float TURN_MS_OFFSET_L = 65.0, TURN_MS_PER_DEG_L = 4.57;   // ben TRAI (goc > 0,
 float TURN_MS_OFFSET_R = 65.0, TURN_MS_PER_DEG_R = 4.57;   // ben PHAI (goc < 0, CW)
 bool  INVERT_TURN = false;        // dao chieu actuation vong re (sua bang serial: TI)
 
-// --- Dieu phoi: WebSocket client toi hub + bo thuc thi route ---
+// --- Dieu phoi TUNG BUOC: server gui 1 buoc, xe lam xong bao lai, server gui buoc ke ---
+// Khac ban cu (server gui CA chuoi route[], xe tu chay het): gio xe chi giu 1 buoc dang chay
+// (curAction), lam xong -> gui {type:stepdone} + dung cho buoc tiep. Server la "bo nao" quyet
+// dinh buoc ke dua tren vi tri (odometry) xe bao ve.
 WebSocketsClient wsClient;
 bool   hubOK = false;             // dang ket noi hub?
-String route[48];                 // chuoi buoc F/L/R/B/DROP/HOME
-float  routeDist[48];             // khoang cach (mm) ky vong cho buoc 'F' tuong ung (0 = khong biet)
-int    routeN = 0, routeIdx = 0;  // so buoc + buoc dang chay
+String curAction = "";            // buoc dang chay: F/L/R/B/DROP/HOME. "" = idle, dang cho server
+float  curDist = 0;               // khoang cach (mm) ky vong cho buoc 'F' hien tai (0 = khong biet)
+int    curSeq = -1;               // chi so buoc (server gui), gui kem trong stepdone
 String routeTarget = "";          // ma o dang giao (C1..C9), "" = khong
-bool   running = false;           // dang chay 1 don giao?
+bool   running = false;           // dang trong 1 chuyen giao?
 int    stepPhase = 0;             // 0 = re/khoi dong doan, 1 = tien bam line, 2 = bo canh tam nga tu
 float  segStartX = 0, segStartY = 0;  // moc odometry dau doan
 bool   leftStart = false;         // da roi giao diem xuat phat cua doan chua
@@ -864,41 +864,52 @@ void doDrop() {
   sendTelemetry();
 }
 
-// Ket thuc don (da ve HOME): dung, san sang don ke tiep.
-void finishRoute() {
-  stopMotors(); lineFollow = false;
-  running = false; stepPhase = 0;
-  routeTarget = ""; cargo = true;
-  hubLog("[route] xong -> ve HOME, san sang");
+// Bao 1 buoc da xong (ok/that bai) ve server + dung cho buoc ke.
+// HOME (buoc cuoi 1 chuyen) hoac that bai -> ket thuc chuyen (running=false).
+void finishStep(bool ok, const String& reason) {
+  stopMotors();
+  String act = curAction;
+  if (act == "HOME" || !ok) { running = false; lineFollow = false; }
+  if (act == "HOME") cargo = true;
+  if (hubOK) {
+    JsonDocument d;
+    d["type"] = "stepdone";
+    d["seq"] = curSeq;
+    d["action"] = act;
+    d["ok"] = ok;
+    d["reason"] = reason;
+    JsonObject p = d["pos"].to<JsonObject>();
+    p["x"]  = (int)lroundf(poseX);
+    p["y"]  = (int)lroundf(poseY);
+    p["th"] = (int)lroundf(poseTheta * 180.0f / PI);
+    d["lineCount"] = lineCount;
+    String out; serializeJson(d, out);
+    wsClient.sendTXT(out);
+  }
+  curAction = "";              // idle -> cho server gui buoc ke
+  stepPhase = 0;
   sendTelemetry();
 }
 
-// Nap chuoi buoc tu hub va bat dau. Re-anchor odometry tai HOME.
-// dists: khoang cach (mm) ky vong song song voi steps (co the rong/thieu phan tu neu
-// hub cu chua gui - khi do routeDist[] mac dinh 0, quay ve hanh vi cu MIN_EDGE co dinh).
-void startRoute(JsonArrayConst steps, JsonArrayConst dists, const char* target) {
-  routeN = 0;
-  for (JsonVariantConst v : steps) {
-    if (routeN >= 48) break;
-    route[routeN] = String(v.as<const char*>());
-    routeDist[routeN] = (routeN < (int)dists.size()) ? dists[routeN].as<float>() : 0.0f;
-    routeN++;
-  }
-  routeIdx = 0; stepPhase = 0; leftStart = false;
-  routeTarget = target ? target : "";
-  cargo = true;
-  resetOdometry();            // xe dang o HOME -> xoa troi tich luy
+// Nap 1 buoc tu server va bat dau thuc thi. seq==0 -> chuyen moi (reset odometry tai HOME).
+void beginStep(const String& action, float dist, int seq) {
+  if (seq == 0) resetOdometry();     // xe dang o HOME -> xoa troi tich luy
+  curAction = action;
+  curDist   = dist;
+  curSeq    = seq;
+  stepPhase = 0; leftStart = false;
+  lastError = 0; errIntegral = 0;
   running = true;
-  hubLog("[route] bat dau -> " + routeTarget + " (" + String(routeN) + " buoc)");
+  hubLog("[step] " + String(seq) + ": " + action + (dist > 0 ? (" (" + String((int)dist) + "mm)") : ""));
 }
 
-// Chay 1 nhip cua route (goi trong loop khi running).
-// Moi buoc F/L/R/B = RE truoc (0/+90/-90/180) roi TIEN 1 canh toi giao diem/het line.
-void routeStep() {
-  if (routeIdx >= routeN) { finishRoute(); return; }
-  String s = route[routeIdx];
+// Thuc thi 1 nhip cua buoc HIEN TAI (goi trong loop khi running && curAction != "").
+// Xong 1 buoc -> finishStep(...) (gui stepdone + idle cho buoc ke tu server).
+// Moi buoc L/R/B = RE truoc (0/+90/-90/180) roi TIEN 1 canh toi giao diem/het line.
+void stepExec() {
+  String s = curAction;
 
-  if (s == "DROP") { doDrop(); routeIdx++; return; }
+  if (s == "DROP") { doDrop(); finishStep(true, "drop"); return; }
   if (s == "HOME") {
     // Nhanh HOME tren map chi noi 1 chieu (tu luoi di ra) -> xe LUON toi HOME voi
     // huong ~180 do (nguoc voi luc xuat phat, nhin +x=0 do). Xoay lai ve 0 do de
@@ -912,18 +923,15 @@ void routeStep() {
       stepPhase = 3;
       return;
     }
-    // stepPhase == 3: bo CAN CHINH lai line (khong chuyen tiep sang bam line - day la
-    // buoc cuoi cung, chi can dung dung tren line la xong).
-    // Dung nguong >=2 mat (chu khong phai >=1 nhu reacquire thuong): day la LAN KIEM TRA
-    // DAU TIEN ngay sau khi dung yen (0mm di chuyen) - 1 mat le co the bao DUONG TINH GIA
-    // do nhieu/mat hong, khien code bao "xong" ngay ma xe CHUA HE bo chinh gi (da xay ra
-    // thuc te: xe LECH han khoi line nhung van bao thanh cong).
+    // stepPhase == 3: bo CAN CHINH lai line. Dung nguong >=2 mat (khong phai >=1 nhu
+    // reacquire thuong): day la LAN KIEM TRA DAU TIEN ngay sau khi dung yen (0mm di
+    // chuyen) - 1 mat le co the bao DUONG TINH GIA do nhieu/mat hong.
     computeLineError();
-    if (lineCount >= 2 && !lineLost) { stepPhase = 0; routeIdx++; return; }  // da can lai line -> xong that
+    if (lineCount >= 2 && !lineLost) { finishStep(true, "home"); return; }  // da can lai line -> xong
     float d = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f - reacqStartMM;
     if (d > REACQUIRE_MAX_MM) {   // bo qua xa van khong thay -> thoi, cu ket thuc (tranh xe ket mai)
-      hubLog("[route] Ve HOME: khong can lai duoc line sau khi quay - van coi la xong (kiem tra vi tri xe).");
-      stepPhase = 0; routeIdx++; return;
+      finishStep(true, "home: khong can lai duoc line sau khi quay (kiem tra vi tri xe)");
+      return;
     }
     int spd = max(REACQUIRE_SPEED, TURN_OPEN_PWM);
     driveA(spd); driveB(spd);
@@ -935,7 +943,7 @@ void routeStep() {
     if      (s == "L") deg = 90;
     else if (s == "R") deg = -90;
     else if (s == "B") deg = 180;
-    if (deg != 0) turnRelative(deg);          // rE tai cho (PID, blocking)
+    if (deg != 0) turnRelative(deg);          // rE tai cho (co dinh, blocking)
     segStartX = poseX; segStartY = poseY; leftStart = false;
     lastError = 0; errIntegral = 0;
     reacqStartMM = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f;
@@ -947,32 +955,32 @@ void routeStep() {
   if (stepPhase == 3) {
     computeLineError();                        // cap nhat lineCount/lineLost
     if (lineCount >= 1 && !lineLost) {         // da bat duoc line moi
-      segStartX = poseX; segStartY = poseY; leftStart = false;
+      // KHONG reset segStart o day: giu moc tu pha 0 (= vi tri NODE, truoc khi bo reacquire)
+      // de trav trong pha 1 do dung khoang cach truc banh TU NODE -> khop voi curDist
+      // (node->node). Reset o day se bo qua doan reacquire -> trav thieu -> gate sai.
+      leftStart = false;
       lastError = 0; errIntegral = 0;
       stepPhase = 1;
       return;
     }
     float d = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f - reacqStartMM;
     if (d > REACQUIRE_MAX_MM) {                // bo qua xa van khong thay -> DUNG AN TOAN
-      stopMotors(); running = false; stepPhase = 0;
-      hubLog("[route] MAT LINE sau khi re (bo " + String((int)d) + "mm khong thay) -> DUNG. Kiem tra goc re / CENTER_OFFSET.");
+      finishStep(false, "MAT LINE sau khi re (bo " + String((int)d) + "mm khong thay). Kiem tra goc re / CENTER_OFFSET.");
       return;
     }
     // Dang dung yen (vua RE xong, van toc = 0) truoc khi bo: REACQUIRE_SPEED (130) co the
     // duoi nguong ma sat tinh khi khoi dong tu dung im hoan toan -> xe "e" tai cho, encoder
-    // khong tang, khong bao gio cham REACQUIRE_MAX_MM -> DUNG xuat hien log MAT LINE nhung
-    // xe cung khong nhich (giong het bug quay tai cho truoc day). Dung TURN_OPEN_PWM lam san
-    // toi thieu de dam bao THUC SU lan banh.
+    // khong tang. Dung TURN_OPEN_PWM lam san toi thieu de dam bao THUC SU lan banh.
     int spd = max(REACQUIRE_SPEED, TURN_OPEN_PWM);
     driveA(spd); driveB(spd);                  // bo thang, KHONG xoay
     return;
   }
 
-  // --- Pha 2: bo thang them de canh TRUC BANH vao tam nga tu roi moi re ---
+  // --- Pha 2: bo thang them de canh TRUC BANH vao tam nga tu -> xong buoc ---
   if (stepPhase == 2) {
     float d = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f - centerStartMM;
     if (d < CENTER_OFFSET_MM) { driveA(baseSpeed); driveB(baseSpeed); }   // bo thang
-    else { stopMotors(); stepPhase = 0; routeIdx++; }                     // da canh tam -> buoc ke
+    else { finishStep(true, "toi giao diem"); }                          // da canh tam -> xong buoc
     return;
   }
 
@@ -980,16 +988,24 @@ void routeStep() {
   bool found = computeLineError();          // cap nhat lineCount/lineLost/lineError
   float trav = hypotf(poseX - segStartX, poseY - segStartY);
   if (!leftStart && lineCount <= 2 && !lineLost) leftStart = true;   // da roi nga tu cu
-  // Neu map biet truoc khoang cach doan nay (routeDist, gom ca cac buoc F GOP nhieu doan
-  // nho lai), dung no lam nguong toi thieu THAY VI MIN_EDGE co dinh -> tranh nhan nham 1
-  // giao diem MANH nam GIUA doan (truoc dich that) la "da toi noi", di qua qua som.
-  float expectedDist = routeDist[routeIdx];
-  float minGate = (expectedDist > MIN_EDGE) ? (expectedDist - REACQUIRE_MAX_MM) : MIN_EDGE;
-  float maxGate = (expectedDist > 0) ? max(MAX_EDGE, expectedDist + REACQUIRE_MAX_MM) : MAX_EDGE;
+  // curDist = khoang cach NODE->NODE (truc banh di het 1 doan). Cam bien o TRUOC truc banh
+  // CENTER_OFFSET_MM, nen no cham giao diem ke khi truc banh moi di duoc (curDist - offset).
+  // Dat cong 2 phia diem nay 1 khoang dung sai GATE_SLACK: minGate chan nhan nham giao diem
+  // giua doan (F gop), maxGate ep dung gan node du KHONG thay tin hieu giao diem (chong vot).
+  // curDist==0 (route thu cong khong ghi mm) -> quay ve nguong co dinh cu.
+  const float GATE_SLACK = 90.0f;
+  float minGate, maxGate;
+  if (curDist > 0) {
+    float detectTrav = curDist - CENTER_OFFSET_MM;      // trav ky vong khi cam bien cham node
+    minGate = max(40.0f, detectTrav - GATE_SLACK);
+    maxGate = detectTrav + GATE_SLACK;
+  } else {
+    minGate = MIN_EDGE; maxGate = MAX_EDGE;
+  }
   bool reached = false;
   if (trav > minGate) {
     if (leftStart && (lineCount >= INTERSECT_N || lineLost)) reached = true;  // toi nga tu / het line
-    if (trav > maxGate) reached = true;                                       // an toan
+    if (trav > maxGate) reached = true;                                       // an toan (chong vot)
   }
   if (reached) {                       // thay nga tu -> canh tam (khong re ngay = tranh re som)
     centerStartMM = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f;
@@ -1063,8 +1079,8 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
       if (deserializeJson(doc, payload, len)) return;   // loi parse -> bo
       const char* cmd = doc["cmd"];
       if (!cmd) return;                                 // hello/khac -> bo qua
-      if      (!strcmp(cmd, "route"))  startRoute(doc["steps"].as<JsonArrayConst>(), doc["dists"].as<JsonArrayConst>(), doc["target"] | "");
-      else if (!strcmp(cmd, "stop"))   { running = false; lineFollow = false; stopMotors(); routeTarget = ""; hubLog("[ws] STOP"); }
+      if      (!strcmp(cmd, "step"))   beginStep(String((const char*)(doc["action"] | "F")), doc["dist"] | 0.0f, doc["seq"] | 0);
+      else if (!strcmp(cmd, "stop"))   { running = false; curAction = ""; lineFollow = false; stopMotors(); routeTarget = ""; hubLog("[ws] STOP"); }
       else if (!strcmp(cmd, "manual")) doManual(String((const char*)(doc["dir"] | "S")));
       else if (!strcmp(cmd, "drop"))   doDrop();
       else if (!strcmp(cmd, "calib"))  { hubLog("[calib] Bat dau hieu chuan line..."); calibrateLine(); }
@@ -1333,12 +1349,14 @@ void loop() {
   // Odometry: cap nhat lien tuc
   updateOdometry();
 
-  // Dieu phoi: chay route tu hub; neu khong, cho phep bam line thu cong (menu 'g')
+  // Dieu phoi TUNG BUOC: chi chay khi dang co buoc (curAction!=""); xong 1 buoc thi
+  // curAction="" -> xe DUNG CHO server gui buoc ke. Neu khong co route, cho phep bam
+  // line thu cong (menu 'g').
   static unsigned long lastPid = 0;
-  if (running) {
-    if (stepPhase == 0) routeStep();                                    // buoc re (blocking) chay ngay
-    else if (millis() - lastPid >= 10) { lastPid = millis(); routeStep(); }  // tien PID ~10ms
-  } else if (lineFollow && millis() - lastPid >= 10) {
+  if (running && curAction.length()) {
+    if (stepPhase == 0) stepExec();                                    // buoc re (blocking) chay ngay
+    else if (millis() - lastPid >= 10) { lastPid = millis(); stepExec(); }  // tien PID ~10ms
+  } else if (!running && lineFollow && millis() - lastPid >= 10) {
     lastPid = millis();
     lineFollowStep();
   }
