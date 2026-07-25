@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>🚚 Xe giao hàng — Điều khiển & Giám sát</title>
+<title>AGV giao hàng</title>
 <link rel="stylesheet" href="style.css">
-<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 </head>
 <body>
 <header>
-  <h1>🚚 Xe giao hàng dò line + quét QR</h1>
+  <h1>🚚 AGV giao hàng</h1>
   <div style="display:flex;gap:10px;align-items:center">
+    <a class="badge on" href="/scan.html">📷 Quét QR</a>
     <a class="badge on" href="/qr.html">🔳 QR test</a>
     <a class="badge on" href="/admin.html">🛠️ Quản lý hàng</a>
     <div id="conn" class="badge off">● mất kết nối</div>
@@ -22,22 +22,11 @@
   <section class="panel">
     <h2>🗺️ Bản đồ &amp; vị trí xe</h2>
     <canvas id="map" width="520" height="560"></canvas>
-    <label class="hint" style="display:block;margin-top:6px">
-      <input type="checkbox" id="dims" checked onchange="draw()"> 📐 Hiện kích thước (mm)
-    </label>
     <div id="status" class="status">Đang chờ dữ liệu…</div>
   </section>
 
-  <!-- CỘT PHẢI: điều khiển + QR + log -->
+  <!-- CỘT PHẢI: điều khiển + log -->
   <section class="panel">
-    <h2>📷 Quét QR (camera điện thoại)</h2>
-    <div id="reader"></div>
-    <div class="row">
-      <button class="btn b-start" id="qrStart">Bật camera</button>
-      <button class="btn b-stop"  id="qrStop">Tắt camera</button>
-    </div>
-    <div id="qrResult" class="qr-result">Chưa quét.</div>
-
     <h2>🎮 Điều khiển</h2>
     <div class="row" id="goButtons" style="flex-wrap:wrap"></div>
     <div class="row">
@@ -70,12 +59,11 @@
       <button class="btn b-go" onclick="send({cmd:'line'})">📟 Đọc 8 mắt line</button>
       <button class="btn b-go" onclick="send({cmd:'linezero'})">🎯 Đặt tâm line</button>
     </div>
-    <p class="hint" style="margin-top:6px">Thông số PID / rẽ / gyro / đường kính bánh đã CỐ ĐỊNH trong firmware — sửa trong code &amp; nạp lại khi cần hiệu chuẩn.</p>
 
     <h2>📜 Nhật ký giao hàng</h2>
     <ul id="log" class="log"></ul>
 
-    <h2>🖥️ Log xe (ESP32)
+    <h2>🖥️ Log xe
       <button class="btn b-stop" style="float:right;padding:4px 10px;font-size:.8em" onclick="clearCarLog()">Xóa</button>
     </h2>
     <div id="carlog" class="carlog"></div>

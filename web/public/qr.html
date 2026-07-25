@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>🔳 Mã QR test</title>
 <link rel="stylesheet" href="style.css">
-<script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs@gh-pages/qrcode.min.js"></script>
+<script src="vendor/qrcode.min.js"></script>
 <style>
   .qr-grid { display: flex; flex-wrap: wrap; gap: 14px; }
   .qr-card { background: #fff; border-radius: 10px; padding: 12px; text-align: center; color: #111; width: 180px; }
@@ -21,6 +21,12 @@
 </header>
 
 <main>
+  <section class="panel">
+    <h2>📱 QR truy cập trang điều khiển</h2>
+    <p class="hint">Điện thoại cùng WiFi quét mã này để mở trang. Gặp cảnh báo chứng chỉ → bấm "Vẫn truy cập".</p>
+    <div id="accessCards" class="qr-grid"></div>
+  </section>
+
   <section class="panel">
     <h2>✏️ Tạo QR tuỳ ý</h2>
     <p class="hint">Nhập nội dung bất kỳ (vd <code>A</code>, <code>SP-001</code>, hoặc <code>C5</code>) rồi quét thử.</p>
@@ -60,6 +66,17 @@ fetch('/api/goods').then(r => r.json()).then(goods => {
   const box = document.getElementById('cards');
   if (!goods.length) { box.innerHTML = '<p class="hint">Chưa có hàng nào.</p>'; return; }
   goods.forEach(g => makeCard(box, g.code, `${g.name || ''} → ${g.node}`));
+});
+
+// QR truy cập trang (URL LAN của server) — quét bằng điện thoại để mở
+fetch('/api/access').then(r => r.json()).then(({ urls }) => {
+  const box = document.getElementById('accessCards');
+  if (!urls || !urls.length) { box.innerHTML = '<p class="hint">Không lấy được IP LAN.</p>'; return; }
+  box.innerHTML = '';
+  urls.forEach(u => makeCard(box, u, 'Mở trên điện thoại'));
+}).catch(() => {
+  document.getElementById('accessCards').innerHTML =
+    '<p class="hint">Chưa lấy được URL (khởi động lại server để bật /api/access).</p>';
 });
 </script>
 </body>

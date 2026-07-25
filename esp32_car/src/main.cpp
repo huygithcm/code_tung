@@ -152,17 +152,18 @@ float LINE_TRIM = 0.5;             // tam that cua mang cam bien (don vi = khoan
 float poseX = 0, poseY = 0, poseTheta = 0;   // mm, mm, rad
 long  lastOdoL = 0, lastOdoR = 0;
 
-// --- Re CO DINH (open-loop: PWM + thoi gian, KHONG PID/gyro-feedback) ---
-// Ban PID cu (dua vao gyro+encoder) hay bi LAC/TIMEOUT do 2 ben trai/phai khong that su
-// doi xung (ma sat/motor khac nhau). Doi sang re CO DINH: chay 1 PWM co dinh trong thoi
-// gian re -> don gian, KHONG lac, KHONG timeout.
-// QUAN TRONG: quan he thoi_gian -> goc_thuc KHONG ti le thuan tu 0 - co "thoi gian chet"
-// khoi dong (thang ma sat tinh) truoc khi banh thuc su lan. Do tu nhieu lan Test re (gyro
-// rat on dinh qua nhieu lan do doc lap): goc(do) = GYRO_DPS_RATE*ms - TURN_MS_OFFSET*GYRO_DPS_RATE,
-// tuc ms = TURN_MS_OFFSET + |goc| * TURN_MS_PER_DEG (offset + tuyen tinh, KHONG phai ms=goc*const).
-int   TURN_OPEN_PWM   = 220;      // PWM khi re (co dinh, du manh de thang ma sat ca 2 chieu)
-// 2 ben TRAI/PHAI khong hoan toan doi xung (ma sat, motor) -> tach rieng he so moi ben,
-// deu tinh ms = OFFSET_x + |goc| * PERDEG_x. Hieu chuan rieng bang "Test re" +90/-90.
+// --- Re theo GOC do bang GYRO (khong phu thuoc pin) ---
+// Ban open-loop cu (PWM + THOI GIAN co dinh) bi loi: pin day hon -> cung PWM nhung banh
+// quay nhanh hon -> cung thoi gian nhung GOC LON HON -> vot, mat line. Thoi gian khong
+// "biet" xe da quay bao nhieu do.
+// FIX TRIET DE: quay o PWM co dinh, DOC GOC THAT tu gyro (poseTheta) lien tuc, dung NGAY
+// khi dat du goc (tru TURN_LEAD_DEG de bu quan tinh khi cat dien). Do dung theo goc THAT
+// nen KHONG phu thuoc dien ap pin. KHONG servo/sua lui -> KHONG lac (quay 1 lan roi thoi).
+// Khong co gyro (mpuOK=false) -> fallback ve open-loop thoi gian (ms/do).
+int   TURN_OPEN_PWM   = 200;      // PWM khi re (thap hon 1 chut cho bot quan tinh; du thang ma sat)
+float TURN_LEAD_DEG   = 6.0;      // dung SOM bao nhieu do de bu quan tinh (xe con truot them sau khi cat dien)
+int   TURN_TIMEOUT_MS = 4000;     // gioi han an toan: qua thoi gian nay chua dat goc -> dung
+// Fallback open-loop (chi dung khi KHONG co gyro): ms = OFFSET + |goc|*PERDEG, rieng trai/phai.
 float TURN_MS_OFFSET_L = 65.0, TURN_MS_PER_DEG_L = 4.57;   // ben TRAI (goc > 0, CCW)
 float TURN_MS_OFFSET_R = 65.0, TURN_MS_PER_DEG_R = 4.57;   // ben PHAI (goc < 0, CW)
 bool  INVERT_TURN = false;        // dao chieu actuation vong re (sua bang serial: TI)
@@ -176,6 +177,10 @@ bool   hubOK = false;             // dang ket noi hub?
 String curAction = "";            // buoc dang chay: F/L/R/B/DROP/HOME. "" = idle, dang cho server
 float  curDist = 0;               // khoang cach (mm) ky vong cho buoc 'F' hien tai (0 = khong biet)
 int    curSeq = -1;               // chi so buoc (server gui), gui kem trong stepdone
+float  curNodeX = 0, curNodeY = 0; // toa do NODE xe toi sau buoc nay (server gui) -> RE-ANCHOR
+bool   curNodeValid = false;      // co toa do node de snap odometry khong
+float  curNodeTh = 0;             // huong doan di vao node (rad) -> snap poseTheta
+bool   curNodeThValid = false;    // co huong de snap khong (DROP: khong)
 String routeTarget = "";          // ma o dang giao (C1..C9), "" = khong
 bool   running = false;           // dang trong 1 chuyen giao?
 int    stepPhase = 0;             // 0 = re/khoi dong doan, 1 = tien bam line, 2 = bo canh tam nga tu
@@ -185,7 +190,7 @@ bool   cargo = true;              // con hang tren xe?
 int    lineCount = 0;             // so mat thay den o lan doc gan nhat
 const float MIN_EDGE = 120;       // mm toi thieu 1 doan truoc khi cho ket thuc
 const float MAX_EDGE = 750;       // mm toi da 1 doan (chan runaway neu miss giao diem)
-int    INTERSECT_N = 4;           // >= so mat thay den => coi la giao diem (nga tu).
+int    INTERSECT_N = 3;           // >= so mat thay den => coi la giao diem (nga tu).
                                   // Do thuc te: giao diem CHU T (nhanh vao o) chi cho cnt=4
                                   // (stub lech 1 ben, khong doi xung nhu giao diem chu thap)
                                   // -> nguong 5 (cu) KHONG BAO GIO nhan ra giao diem chu T,
@@ -197,7 +202,7 @@ float  centerStartMM = 0;         // moc quang duong khi bat dau bo canh tam
 // Thay vi XOAY TAI CHO de do (se quet trung nhanh CU -> chay nguoc), ta BO THANG CHAM
 // de dua cam bien len nhanh moi. Khong thay trong REACQUIRE_MAX -> dung an toan.
 int    REACQUIRE_SPEED  = 130;    // toc do bo (cham) khi canh tam / tim line
-int    REACQUIRE_MAX_MM = 150;    // bo toi da bao nhieu mm de tim; qua -> dung an toan
+int    REACQUIRE_MAX_MM = 220;    // bo toi da bao nhieu mm de tim; qua -> dung an toan (noi rong de bot MAT LINE o nhanh)
 float  reacqStartMM = 0;
 
 // ===================== Encoder ISR (quadrature) =====================
@@ -488,34 +493,51 @@ void lineFollowStep() {
   lineDrivePID();
 }
 
-// ===================== Re CO DINH (open-loop) =====================
+// ===================== Re theo GOC (gyro feedback) =====================
 // Quay tai cho mot goc tuong doi (deg). Duong = quay trai (CCW), am = phai.
-// KHONG dung PID/phan hoi: chay PWM TURN_OPEN_PWM co dinh trong thoi gian
-// = OFFSET_x + |deg| * PERDEG_x (ms) roi dung, voi he so RIENG cho trai/phai (xem khai
-// bao bien). Odometry (gyro+encoder) van duoc cap nhat trong luc quay NHUNG CHI DE GHI
-// LOG/telemetry - khong dung de dieu chinh toc do/thoi gian. Hieu chuan bang "Test re"
-// tren web: so dat=... voi tgt=..., neu dat<tgt tang PERDEG ben do (hoac OFFSET neu sai
-// deu ca goc nho), dat>tgt thi giam.
+// CACH LAM (khong phu thuoc pin): chay PWM co dinh, doc GOC THAT (poseTheta, hop nhat gyro)
+// lien tuc, DUNG NGAY khi da quay du (|goc| >= |deg| - TURN_LEAD_DEG). TURN_LEAD_DEG bu phan
+// xe con truot them sau khi cat dien. KHONG servo/sua lui -> quay 1 lan roi thoi, khong lac.
+// Neu KHONG co gyro -> fallback open-loop theo thoi gian (ms/do) nhu truoc.
 void turnRelative(float deg) {
   if (fabs(deg) < 0.5f) return;
   float startTheta = poseTheta;
   int sgn = INVERT_TURN ? -1 : 1;
   int dir = (deg >= 0) ? 1 : -1;
-  float offset = (deg >= 0) ? TURN_MS_OFFSET_L  : TURN_MS_OFFSET_R;
-  float perDeg = (deg >= 0) ? TURN_MS_PER_DEG_L : TURN_MS_PER_DEG_R;
-  unsigned long ms = (unsigned long)(offset + fabs(deg) * perDeg + 0.5f);
+  unsigned long t0 = millis();
+  bool timedOut = false;
 
   driveA(sgn * dir * TURN_OPEN_PWM); driveB(-sgn * dir * TURN_OPEN_PWM);  // quay tai cho: 2 banh nguoc chieu
-  unsigned long t0 = millis();
-  while (millis() - t0 < ms) { updateOdometry(); delay(2); }
+
+  if (mpuOK) {
+    // --- Dung theo GOC THAT (khong phu thuoc pin) ---
+    float targetAbs = fabs(deg) - TURN_LEAD_DEG;
+    if (targetAbs < fabs(deg) * 0.5f) targetAbs = fabs(deg) * 0.5f;   // goc nho: it nhat quay nua goc
+    while (true) {
+      updateOdometry();
+      float progAbs = fabs(poseTheta - startTheta) * 180.0f / PI;      // goc DA quay (do)
+      if (progAbs >= targetAbs) break;
+      if (millis() - t0 > (unsigned long)TURN_TIMEOUT_MS) { timedOut = true; break; }
+      delay(2);
+    }
+  } else {
+    // --- Fallback: khong co gyro -> chay theo thoi gian (ms/do), rieng trai/phai ---
+    float offset = (deg >= 0) ? TURN_MS_OFFSET_L  : TURN_MS_OFFSET_R;
+    float perDeg = (deg >= 0) ? TURN_MS_PER_DEG_L : TURN_MS_PER_DEG_R;
+    unsigned long ms = (unsigned long)(offset + fabs(deg) * perDeg + 0.5f);
+    while (millis() - t0 < ms) { updateOdometry(); delay(2); }
+  }
   stopMotors();
 
+  // Cho dung han + do lai goc that de ghi log (xe con truot 1 chut sau khi cat dien)
+  delay(120);
+  updateOdometry();
   float achievedDeg = (poseTheta - startTheta) * 180.0f / PI;
-  float errDeg = deg - achievedDeg;
-  char res[140];
+  char res[150];
   snprintf(res, sizeof(res),
-    "[turnres] tgt=%.1f dat=%.2f err=%.2f ms=%lu (co dinh, pwm=%d)",
-    deg, achievedDeg, errDeg, ms, TURN_OPEN_PWM);
+    "[turnres] tgt=%.1f dat=%.2f err=%.2f ms=%lu (%s, pwm=%d)",
+    deg, achievedDeg, deg - achievedDeg, millis() - t0,
+    mpuOK ? (timedOut ? "gyro-TIMEOUT" : "gyro") : "thoi-gian", TURN_OPEN_PWM);
   hubLog(res);
 }
 
@@ -886,17 +908,30 @@ void finishStep(bool ok, const String& reason) {
     String out; serializeJson(d, out);
     wsClient.sendTXT(out);
   }
+  // RE-ANCHOR: buoc THANH CONG toi 1 node da biet -> snap odometry ve dung toa do + HUONG node,
+  // xoa troi tich luy (xe bam line thuc te dung nhung odometry troi dan). Bao pose THO o tren
+  // (server do troi that) roi moi snap. Chi snap khi ok (that bai -> xe khong o node).
+  if (ok && curNodeValid) {
+    poseX = curNodeX;
+    poseY = curNodeY;
+    if (curNodeThValid) poseTheta = curNodeTh;   // snap ca HUONG -> xoa troi huong tich luy
+  }
   curAction = "";              // idle -> cho server gui buoc ke
   stepPhase = 0;
   sendTelemetry();
 }
 
 // Nap 1 buoc tu server va bat dau thuc thi. seq==0 -> chuyen moi (reset odometry tai HOME).
-void beginStep(const String& action, float dist, int seq) {
+// nodeX/nodeY: toa do node xe se toi (server gui de re-anchor); nodeValid=false -> khong snap.
+// nodeTh (rad): huong doan di vao node; nodeThValid=false -> khong snap huong.
+void beginStep(const String& action, float dist, int seq, float nodeX, float nodeY, bool nodeValid,
+               float nodeTh, bool nodeThValid) {
   if (seq == 0) resetOdometry();     // xe dang o HOME -> xoa troi tich luy
   curAction = action;
   curDist   = dist;
   curSeq    = seq;
+  curNodeX = nodeX; curNodeY = nodeY; curNodeValid = nodeValid;
+  curNodeTh = nodeTh; curNodeThValid = nodeThValid;
   stepPhase = 0; leftStart = false;
   lastError = 0; errIntegral = 0;
   running = true;
@@ -990,22 +1025,22 @@ void stepExec() {
   if (!leftStart && lineCount <= 2 && !lineLost) leftStart = true;   // da roi nga tu cu
   // curDist = khoang cach NODE->NODE (truc banh di het 1 doan). Cam bien o TRUOC truc banh
   // CENTER_OFFSET_MM, nen no cham giao diem ke khi truc banh moi di duoc (curDist - offset).
-  // Dat cong 2 phia diem nay 1 khoang dung sai GATE_SLACK: minGate chan nhan nham giao diem
-  // giua doan (F gop), maxGate ep dung gan node du KHONG thay tin hieu giao diem (chong vot).
-  // curDist==0 (route thu cong khong ghi mm) -> quay ve nguong co dinh cu.
-  const float GATE_SLACK = 90.0f;
-  float minGate, maxGate;
+  // NHAN DIEN NGA TU LA CHINH: chay den khi CAM BIEN THAY vach ngang (cnt>=INTERSECT_N) hoac
+  // HET line (den cuoi nhanh) thi dung -> vi tri chuan theo LINE that (line vat ly luon dung),
+  // KE CA phai chay qua khoang cach du kien. Khoang cach chi dung 2 viec phu:
+  //  - LOWER_MARGIN: khong bat nga tu SOM hon (bo qua giao diem giua doan F-gop / diem xuat phat)
+  //  - SAFETY_MARGIN: chan chay lac vo han neu that su mat line (dung khi qua xa moi chiu thua)
+  const float LOWER_MARGIN  = 130.0f;   // chi bat nga tu tu (detectTrav - margin) tro di
+  const float SAFETY_MARGIN = 220.0f;   // cho phep chay qua detectTrav toi da bay nhieu de tim vach
+  bool reached = false;
   if (curDist > 0) {
     float detectTrav = curDist - CENTER_OFFSET_MM;      // trav ky vong khi cam bien cham node
-    minGate = max(40.0f, detectTrav - GATE_SLACK);
-    maxGate = detectTrav + GATE_SLACK;
+    float minGate = max(40.0f, detectTrav - LOWER_MARGIN);
+    if (trav > minGate && leftStart && (lineCount >= INTERSECT_N || lineLost)) reached = true;  // THAY vach -> dung
+    else if (trav >= detectTrav + SAFETY_MARGIN) reached = true;   // safety chong chay lac
   } else {
-    minGate = MIN_EDGE; maxGate = MAX_EDGE;
-  }
-  bool reached = false;
-  if (trav > minGate) {
-    if (leftStart && (lineCount >= INTERSECT_N || lineLost)) reached = true;  // toi nga tu / het line
-    if (trav > maxGate) reached = true;                                       // an toan (chong vot)
+    if (trav > MIN_EDGE && leftStart && (lineCount >= INTERSECT_N || lineLost)) reached = true;
+    if (trav > MAX_EDGE) reached = true;
   }
   if (reached) {                       // thay nga tu -> canh tam (khong re ngay = tranh re som)
     centerStartMM = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f;
@@ -1079,7 +1114,9 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
       if (deserializeJson(doc, payload, len)) return;   // loi parse -> bo
       const char* cmd = doc["cmd"];
       if (!cmd) return;                                 // hello/khac -> bo qua
-      if      (!strcmp(cmd, "step"))   beginStep(String((const char*)(doc["action"] | "F")), doc["dist"] | 0.0f, doc["seq"] | 0);
+      if      (!strcmp(cmd, "step"))   beginStep(String((const char*)(doc["action"] | "F")), doc["dist"] | 0.0f, doc["seq"] | 0,
+                                                 doc["nodeX"] | 0.0f, doc["nodeY"] | 0.0f, !doc["nodeX"].isNull(),
+                                                 ((float)(doc["nodeTh"] | 0.0f)) * PI / 180.0f, !doc["nodeTh"].isNull());
       else if (!strcmp(cmd, "stop"))   { running = false; curAction = ""; lineFollow = false; stopMotors(); routeTarget = ""; hubLog("[ws] STOP"); }
       else if (!strcmp(cmd, "manual")) doManual(String((const char*)(doc["dir"] | "S")));
       else if (!strcmp(cmd, "drop"))   doDrop();
@@ -1090,6 +1127,7 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         if (!doc["kp"].isNull())       Kp = (float)doc["kp"];
         if (!doc["kd"].isNull())       Kd = (float)doc["kd"];
         if (!doc["openpwm"].isNull())    TURN_OPEN_PWM = constrain((int)doc["openpwm"], 0, 255);
+        if (!doc["lead"].isNull())       TURN_LEAD_DEG = (float)doc["lead"];   // do dung som bu quan tinh
         if (!doc["msperdegL"].isNull())  TURN_MS_PER_DEG_L = (float)doc["msperdegL"];
         if (!doc["msperdegR"].isNull())  TURN_MS_PER_DEG_R = (float)doc["msperdegR"];
         if (!doc["msoffsetL"].isNull())  TURN_MS_OFFSET_L = (float)doc["msoffsetL"];
@@ -1107,7 +1145,7 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
         if (!doc["gyrosign"].isNull()) GYRO_SIGN = ((int)doc["gyrosign"] >= 0) ? 1 : -1;
         hubLog("[tune] base=" + String(baseSpeed) + " min=" + String(MOTOR_MIN_PWM) +
                " kp=" + String(Kp, 1) + " kd=" + String(Kd, 1) +
-               " openpwm=" + String(TURN_OPEN_PWM) +
+               " openpwm=" + String(TURN_OPEN_PWM) + " lead=" + String(TURN_LEAD_DEG, 1) +
                " msperdegL=" + String(TURN_MS_PER_DEG_L, 2) + " msperdegR=" + String(TURN_MS_PER_DEG_R, 2) +
                " msoffsetL=" + String(TURN_MS_OFFSET_L, 1) + " msoffsetR=" + String(TURN_MS_OFFSET_R, 1) +
                " speed=" + String(motorSpeed) +

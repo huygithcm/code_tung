@@ -16,14 +16,29 @@ npm install
 npm start
 ```
 
-Server chạy **HTTPS** (cert tự ký sinh tự động) để camera điện thoại quét QR được.
+Server chạy **HTTPS** để camera điện thoại quét QR được.
 Khi khởi động, console in sẵn URL kèm IP LAN.
 
 - PC giám sát: <https://localhost:3000>
-- **Điện thoại (cùng WiFi): `https://<IP-máy-PC>:3000`** — mở để quét QR.
-  Lần đầu trình duyệt cảnh báo cert tự ký → bấm **Nâng cao → Vẫn truy cập**.
-  (Gõ `http://...` cũng được, tự chuyển sang `https`.)
+- **Điện thoại (cùng WiFi): `https://<IP-máy-PC>:3000`**
+- Trang quét QR (dành cho điện thoại): <https://localhost:3000/scan.html>
 - Trang admin quản lý hàng: <https://localhost:3000/admin.html>
+
+### Hết cảnh báo chứng chỉ (CA nội bộ)
+
+```bash
+node make-ca.js     # tạo web/certs/ (rootCA + cert server cho IP LAN hiện tại)
+```
+
+Rồi cài `certs/rootCA.pem` vào thiết bị (1 lần/thiết bị):
+
+- **Windows**: `certutil -addstore -user -f Root certs\rootCA.pem`
+- **Điện thoại**: tải `https://<IP-PC>:3000/rootCA.pem` → cài chứng chỉ CA
+  (Android: Cài đặt → Bảo mật → Cài chứng chỉ; iOS: cài profile rồi bật *full trust*).
+
+Server tự dùng cert trong `certs/` nếu có, không thì tự ký (sẽ có cảnh báo).
+**Đổi IP/đổi máy** → copy `rootCA.pem` + `rootCA-key.pem` sang rồi chạy lại `node make-ca.js`
+(giữ nguyên rootCA nên thiết bị không phải cài lại).
 
 > Camera (`getUserMedia`) chỉ chạy trên origin bảo mật (HTTPS) hoặc `localhost` —
 > đó là lý do server dùng HTTPS thay vì HTTP.

@@ -1,8 +1,11 @@
 # Node
 node_modules/
 web/goods.json
-web/routes.json
 web/*.log
+
+# Chung chi CA (khoa bi mat - KHONG commit)
+web/certs/
+web/public/rootCA.pem
 
 # PlatformIO / build
 .pio/

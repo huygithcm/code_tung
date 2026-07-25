@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quét QR — AGV giao hàng</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/html5-qrcode.min.js"></script>
+<style>
+  #reader { width: 100%; max-width: 420px; margin: 0 auto; }
+  .scan-status { font-size: 1.05em; line-height: 1.7em; margin-top: 12px; }
+  .big { font-size: 1.15em; padding: 16px 0; width: 100%; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📷 Quét QR giao hàng</h1>
+  <div style="display:flex;gap:10px;align-items:center">
+    <a class="badge on" href="/">← Điều khiển</a>
+    <div id="conn" class="badge off">● mất kết nối</div>
+  </div>
+</header>
+
+<main>
+  <section class="panel" style="max-width:520px;margin:0 auto">
+    <div id="reader"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn b-start big" id="qrStart">Bật camera</button>
+      <button class="btn b-stop big"  id="qrStop">Tắt camera</button>
+    </div>
+    <div id="qrResult" class="qr-result" style="margin-top:12px">Bật camera rồi hướng vào mã QR.</div>
+
+    <div id="status" class="scan-status">Đang chờ dữ liệu…</div>
+
+    <h2>📜 Nhật ký</h2>
+    <ul id="log" class="log"></ul>
+  </section>
+</main>
+
+<script src="scan.js"></script>
+</body>
+</html>

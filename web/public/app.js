@@ -116,29 +116,8 @@ function draw() {
   const p = st.pos, th = (p.th || 0) * Math.PI / 180;
   drawCar(ctx, cx(p), cy(p), th, sc);
 
-  // --- kích thước map (bật/tắt bằng checkbox) ---
-  if (showDims()) {
-    const P = (x, y) => ({ x: cx({ x, y }), y: cy({ x, y }) });
-    // ô ngang 500mm: giữa 2 cột đầu, đặt phía dưới lưới
-    let yb = rows[3] - 110;
-    let a = P(cols[0], yb), b = P(cols[1], yb);
-    extLine(ctx, cx({ x: cols[0], y: rows[3] }), cy({ x: cols[0], y: rows[3] }), a.x, a.y);
-    extLine(ctx, cx({ x: cols[1], y: rows[3] }), cy({ x: cols[1], y: rows[3] }), b.x, b.y);
-    dimLine(ctx, a.x, a.y, b.x, b.y, '500');
-    // ô dọc 475mm: giữa 2 hàng cuối, đặt bên phải lưới
-    let xr = cols[3] + 110;
-    a = P(xr, rows[2]); b = P(xr, rows[3]);
-    extLine(ctx, cx({ x: cols[3], y: rows[2] }), cy({ x: cols[3], y: rows[2] }), a.x, a.y);
-    extLine(ctx, cx({ x: cols[3], y: rows[3] }), cy({ x: cols[3], y: rows[3] }), b.x, b.y);
-    dimLine(ctx, a.x, a.y, b.x, b.y, '475');
-    // nhánh HOME 200mm
-    a = P(0, 0); b = P(cols[0], 0);
-    dimLine(ctx, a.x, a.y + 16, b.x, b.y + 16, '200', '#e6a23c');
-  }
-
   ctx.fillStyle = '#888'; ctx.font = '12px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-  ctx.fillText('ô 500×475mm | 🟠 điểm giao  🟢 HOME  🔵/🟣 xe(còn/hết hàng)', pad, 16);
-  ctx.fillText('xe & map cùng tỉ lệ · ⚪ tâm trục sau = mốc odometry', pad, 30);
+  ctx.fillText('🟠 điểm giao  🟢 HOME  🔵/🟣 xe (còn/hết hàng)', pad, 16);
 }
 function line(cx, cy, x1, y1, x2, y2) { ctx.beginPath(); ctx.moveTo(cx({ x: x1, y: y1 }), cy({ x: x1, y: y1 })); ctx.lineTo(cx({ x: x2, y: y2 }), cy({ x: x2, y: y2 })); ctx.stroke(); }
 function dot(cx, cy, x, y, r) { ctx.beginPath(); ctx.arc(cx({ x, y }), cy({ x, y }), r, 0, 7); ctx.fill(); }
@@ -232,43 +211,6 @@ function drawCar(g, px, py, th, sc) {
   g.restore();
 }
 
-// ---------- Đường kích thước (bản vẽ kỹ thuật) ----------
-// Vẽ đường đo 2 đầu mũi tên + nhãn, giữa 2 điểm canvas (x1,y1)-(x2,y2)
-function dimLine(g, x1, y1, x2, y2, label, color) {
-  const c = color || '#7ee787';
-  g.save();
-  g.strokeStyle = c; g.fillStyle = c; g.lineWidth = 1;
-  g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
-  const a = Math.atan2(y2 - y1, x2 - x1), h = 5;
-  for (const [x, y, dir] of [[x1, y1, a], [x2, y2, a + Math.PI]]) {
-    g.beginPath();
-    g.moveTo(x, y);
-    g.lineTo(x + h * Math.cos(dir - 0.4), y + h * Math.sin(dir - 0.4));
-    g.lineTo(x + h * Math.cos(dir + 0.4), y + h * Math.sin(dir + 0.4));
-    g.closePath(); g.fill();
-  }
-  // nhãn ở giữa, có nền để dễ đọc
-  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-  g.font = 'bold 11px monospace';
-  const w = g.measureText(label).width;
-  g.fillStyle = '#0f1115';
-  g.fillRect(mx - w / 2 - 3, my - 7, w + 6, 14);
-  g.fillStyle = c;
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText(label, mx, my);
-  g.restore();
-}
-// Vạch gióng (extension line)
-function extLine(g, x1, y1, x2, y2) {
-  g.save();
-  g.strokeStyle = '#4b5563'; g.lineWidth = 1;
-  g.setLineDash([2, 3]);
-  g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke();
-  g.restore();
-}
-
-function showDims() { const el = document.getElementById('dims'); return !el || el.checked; }
-
 // ---------- Trạng thái + log ----------
 function renderStatus() {
   const s = st;
@@ -305,27 +247,5 @@ function appendCarLog(e) {
   if (atBottom) box.scrollTop = box.scrollHeight;   // tự cuộn nếu đang ở đáy
 }
 function clearCarLog() { const box = document.getElementById('carlog'); if (box) box.innerHTML = ''; }
-
-// ---------- Quét QR (html5-qrcode) ----------
-let qr = null;
-document.getElementById('qrStart').onclick = async () => {
-  if (qr) return;
-  qr = new Html5Qrcode('reader');
-  try {
-    await qr.start({ facingMode: 'environment' }, { fps: 10, qrbox: 220 }, onScan);
-  } catch (e) { document.getElementById('qrResult').textContent = 'Không mở được camera: ' + e; qr = null; }
-};
-document.getElementById('qrStop').onclick = async () => {
-  if (qr) { await qr.stop(); await qr.clear(); qr = null; }
-};
-let lastScan = 0;
-function onScan(text) {
-  const now = Date.now();
-  if (now - lastScan < 2500) return;        // chống quét trùng
-  lastScan = now;
-  document.getElementById('qrResult').textContent = '📷 QR: ' + text;
-  ROUTE = null;
-  send({ cmd: 'qr', value: text });
-}
 
 connect();

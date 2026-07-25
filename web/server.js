@@ -6,6 +6,7 @@
 // (PLAN.md mục 1, 4, 5, GĐ E)
 // ============================================================================
 
+const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
@@ -26,7 +27,6 @@ function lanIPs() {
 const cfg = require('./config');
 const map = require('./map');
 const store = require('./store');
-const routesOverride = require('./routes-override');
 
 const app = express();
 app.use(express.json());
@@ -39,6 +39,10 @@ app.get('/map', (_req, res) => {
     stubs: map.STUBS, points: map.POINTS,
   });
 });
+
+// ---- URL truy cập trang (để sinh QR mở trên điện thoại) ----
+// Tra ve cac URL https://<ip-LAN>:<port> de dien thoai cung WiFi quet mo trang.
+app.get('/api/access', (_req, res) => res.json({ urls: ips.map(ip => `https://${ip}:${cfg.PORT}`) }));
 
 // ---- API danh mục hàng (trang admin) ----
 app.get('/api/goods', (_req, res) => res.json(store.list()));
@@ -59,28 +63,6 @@ app.delete('/api/goods/:code', (req, res) => {
   res.json({ ok });
 });
 
-// ---- API route thủ công cho từng node (ghi đè Dijkstra tự động) ----
-app.get('/api/routes', (_req, res) => res.json(routesOverride.list()));
-app.get('/api/routes/auto/:node', (req, res) => {   // route tự động hiện tại (để làm điểm khởi đầu chỉnh tay)
-  const plan = map.planDelivery(req.params.node);
-  if (!plan) return res.status(400).json({ error: 'Không tìm được đường' });
-  res.json({ steps: plan.steps, dists: plan.dists });
-});
-app.post('/api/routes', (req, res) => {
-  try {
-    const { node, text } = req.body || {};
-    if (!map.POINTS[node] || node === 'HOME') return res.status(400).json({ error: 'Điểm giao không hợp lệ' });
-    const { steps, dists } = routesOverride.parseSteps(text);
-    const item = routesOverride.set(node, steps, dists);
-    logEvent(`🛠️ Admin: lưu route thủ công cho ${node} | ${steps.join(' ')}`);
-    res.json(item);
-  } catch (e) { res.status(400).json({ error: e.message }); }
-});
-app.delete('/api/routes/:node', (req, res) => {
-  const ok = routesOverride.remove(req.params.node);
-  if (ok) logEvent(`🛠️ Admin: xóa route thủ công cho ${req.params.node} (dùng lại tự động)`);
-  res.json({ ok });
-});
 
 // Server HTTPS được tạo bất đồng bộ trong boot() ở cuối file (cert tự ký async).
 const ips = lanIPs();
@@ -124,7 +106,9 @@ function addCarLog(text) {
 // activeRoute giữ toàn bộ chuỗi bước + con trỏ; server là "bộ não" quyết định bước kế dựa
 // trên vị trí (odometry) xe báo về, đối chiếu với node kỳ vọng (targetsXY) để kiểm tra trôi.
 let activeRoute = null;   // { target, steps, dists, targetsXY, idx, seq, timer }
-const DRIFT_ABORT_MM = 250;    // lệch vị trí quá ngưỡng này sau 1 bước -> dừng an toàn
+const DRIFT_ABORT_MM = 400;    // lệch vị trí quá ngưỡng này sau 1 bước -> dừng an toàn
+                               // (nới rộng: xe bám line vật lý đúng nhưng odometry trôi trong đoạn;
+                               //  chỉ chặn LỖI THẬT lớn, không dừng nhầm xe đang đi đúng)
 const STEP_TIMEOUT_MS = 15000; // xe không báo xong 1 bước trong thời gian này -> coi như treo, dừng
 
 function clearActiveRoute() {
@@ -148,7 +132,17 @@ function sendNextStep() {
   const dist = r.dists ? (r.dists[r.idx] || 0) : 0;
   r.seq = r.idx;
   state.step = { idx: r.idx, total: r.steps.length, action };
-  carSocket.send(JSON.stringify({ cmd: 'step', seq: r.idx, action, dist }));
+  // Gửi kèm toạ độ + HƯỚNG node đích (để xe RE-ANCHOR cả vị trí lẫn hướng khi tới nơi,
+  // xoá trôi tích luỹ -> map bám sát xe thật). nodeTh = hướng đoạn đi vào node (độ, +x=0).
+  const node = r.targetsXY && r.targetsXY[r.idx];
+  const msg = { cmd: 'step', seq: r.idx, action, dist };
+  if (node) {
+    msg.nodeX = Math.round(node.x); msg.nodeY = Math.round(node.y);
+    const prev = r.idx > 0 ? r.targetsXY[r.idx - 1] : { x: 0, y: 0 };  // node trước (HOME nếu bước 0)
+    const dx = node.x - prev.x, dy = node.y - prev.y;
+    if (Math.hypot(dx, dy) > 1) msg.nodeTh = Math.round(Math.atan2(dy, dx) * 180 / Math.PI);  // bỏ qua DROP (0 dài)
+  }
+  carSocket.send(JSON.stringify(msg));
   pushState();
   if (r.timer) clearTimeout(r.timer);
   r.timer = setTimeout(() => {
@@ -197,16 +191,9 @@ function dispatch(target, qr) {
   if (!map.POINTS[target]) { logEvent(`❌ Điểm không hợp lệ: ${target}`); return; }
   clearActiveRoute();
 
-  const manual0 = routesOverride.get(target);
-  let plan;
-  if (manual0) {
-    plan = { target, steps: manual0.steps, dists: manual0.dists, targetsXY: null, waypoints: null };
-    logEvent(`📦 ${qr ? `QR "${qr}" → ` : ''}giao ${target} (route thủ công) | steps: ${plan.steps.join(' ')}`);
-  } else {
-    plan = map.planDelivery(target);
-    if (!plan) { logEvent(`❌ Không tìm được đường tới ${target}`); return; }
-    logEvent(`📦 ${qr ? `QR "${qr}" → ` : ''}giao ${target} | steps: ${plan.steps.join(' ')}`);
-  }
+  const plan = map.planDelivery(target);
+  if (!plan) { logEvent(`❌ Không tìm được đường tới ${target}`); return; }
+  logEvent(`📦 ${qr ? `QR "${qr}" → ` : ''}giao ${target} | steps: ${plan.steps.join(' ')}`);
   broadcast({ type: 'route', plan });   // web vẽ đường
 
   if (!(carSocket && carSocket.readyState === 1)) { logEvent('⚠️ Chưa có xe kết nối'); return; }
@@ -324,20 +311,32 @@ function onConnection(ws) {
   });
 }
 
-// ---- Khởi động: sinh cert tự ký (async) → HTTPS + WS + HTTP redirect ----
+// ---- Khởi động: HTTPS + WS + HTTP redirect ----
+// Ưu tiên cert của CA nội bộ (web/certs/, sinh bằng `node make-ca.js`) -> thiết bị đã cài
+// rootCA sẽ KHÔNG hiện cảnh báo. Không có file -> tự ký tạm (sẽ có cảnh báo như cũ).
 async function boot() {
-  const altNames = [
-    { type: 2, value: 'localhost' },
-    { type: 7, ip: '127.0.0.1' },
-    ...ips.map(ip => ({ type: 7, ip })),
-  ];
-  const pems = await selfsigned.generate(
-    [{ name: 'commonName', value: 'xe-giao-hang' }],
-    { days: 825, keySize: 2048, algorithm: 'sha256',
-      extensions: [{ name: 'subjectAltName', altNames }] }
-  );
+  let creds;
+  const certPath = path.join(__dirname, 'certs', 'server.pem');
+  const keyPath = path.join(__dirname, 'certs', 'server-key.pem');
+  if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+    creds = { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) };
+    console.log('  🔒 Dùng cert CA nội bộ (web/certs/). Thiết bị đã cài rootCA -> không cảnh báo.');
+  } else {
+    const altNames = [
+      { type: 2, value: 'localhost' },
+      { type: 7, ip: '127.0.0.1' },
+      ...ips.map(ip => ({ type: 7, ip })),
+    ];
+    const pems = await selfsigned.generate(
+      [{ name: 'commonName', value: 'xe-giao-hang' }],
+      { days: 825, keySize: 2048, algorithm: 'sha256',
+        extensions: [{ name: 'subjectAltName', altNames }] }
+    );
+    creds = { key: pems.private, cert: pems.cert };
+    console.log('  ⚠️ Chưa có cert CA (chạy `node make-ca.js`) -> dùng cert tự ký, trình duyệt sẽ cảnh báo.');
+  }
 
-  server = https.createServer({ key: pems.private, cert: pems.cert }, app);
+  server = https.createServer(creds, app);
   wss = new WebSocketServer({ server });
   wss.on('connection', onConnection);
 
