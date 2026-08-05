@@ -1,35 +1,17 @@
-﻿/*
- * FIRMWARE TEST / HIEU CHUAN  -  Xe do line ESP32
- * Test: 2 Motor DC (L298N) + 2 Encoder + Servo tha hang + Buzzer
+/*
+ * MAIN WORK - FIRMWARE RELEASE XE DÒ LINE ESP32
  *
- * Dieu khien qua Serial Monitor (115200 baud, gui kem Newline).
- * Go lenh roi Enter. Go "?" de xem menu.
- *
- * Chua bat WiFi - chi de test phan cung va lay so lieu hieu chuan
- * (duong kinh banh, PPR encoder, goc servo giu/tha).
+ * Bản mã nguồn rút gọn để trình bày trong báo cáo.
+ * Chỉ giữ các chức năng vận hành chính: đọc cảm biến, điều khiển động cơ,
+ * PID bám line, encoder/gyro, điều phối lộ trình, WiFi, WebSocket, OTA và NVS.
+ * Đã loại bỏ: menu Serial, in telemetry debug, web local, lệnh test và hiệu chuẩn.
+ * Thông tin WiFi/IP bên dưới là giá trị minh họa để bảo mật khi đưa vào báo cáo.
  */
-
-// ===================== Che do build =====================
-// -DDEBUG_MODE=1 (env:debug/ota) -> day du menu test va chan doan
-// -DDEBUG_MODE=0 (env:release)   -> chi giu luong van hanh
-#ifndef DEBUG_MODE
-#define DEBUG_MODE 1
-#endif
-#if DEBUG_MODE
-  #define DBG(...)   Serial.printf(__VA_ARGS__)
-  #define DBGLN(x)   Serial.println(x)
-#else
-  #define DBG(...)   do{}while(0)
-  #define DBGLN(x)   do{}while(0)
-#endif
 
 #include <Arduino.h>
 #include <ESP32Servo.h>
 #include <Preferences.h>
 #include <WiFi.h>
-#if DEBUG_MODE
-#include <WebServer.h>
-#endif
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
@@ -38,34 +20,31 @@
 
 // ===================== WiFi (STA - noi WiFi nha) =====================
 // SUA ten/mat khau WiFi nha ban o day:
-#define WIFI_SSID "TEN_WIFI"            // thay bang ten WiFi khi nap lan dau
-#define WIFI_PASS "MAT_KHAU_WIFI"       // thay bang mat khau WiFi khi nap lan dau
+#define WIFI_SSID "TEN_WIFI"
+#define WIFI_PASS "MAT_KHAU_WIFI"
 
 // Hub (server Node) - IP may chay server + cong WS THUONG cho xe (= PORT+2 = 3002)
 // Chi la MAC DINH du phong: xe TU TIM hub qua UDP broadcast (khong can sua tay).
-#define HUB_HOST "192.168.1.100"         // IP minh hoa; xe se tu tim hub qua UDP
+#define HUB_HOST "192.168.1.100"
 #define HUB_PORT 3002
 #define DISC_PORT 3003             // cong UDP discovery cua server (= PORT+3)
 
-#if DEBUG_MODE
-WebServer server(80);
-#endif
 bool wifiOK = false;
 Preferences prefs;
 
-// ===== Cau hinh mang runtime (sua qua Serial, luu NVS). Mac dinh = #define tren =====
+// ===== Cấu hình mạng runtime, lưu trong NVS; mặc định lấy từ hằng số phía trên =====
 String cfgSsid = WIFI_SSID;   // ten WiFi
 String cfgPass = WIFI_PASS;   // mat khau WiFi
 String cfgHub  = HUB_HOST;    // IP laptop chay server.js
 
-// Forward declaration (dinh nghia o cuoi file, dung trong handleCommand)
+// Khai báo trước các hàm dịch vụ
 void setupWiFi();
 void startHub();
 void startOTA();
 void onWifiUp();
 void saveNetConfig();
 bool computeLineError();
-void hubLog(const String& s);   // in Serial + day log len hub (web doc duoc)
+void hubLog(const String& s);
 
 // ===================== CHAN (theo PLAN.md) =====================
 // Motor A (banh TRAI)
@@ -136,13 +115,7 @@ int   motorSpeed = 210;            // toc do hien tai 0..255 (mac dinh 210)
 int   MOTOR_MIN_PWM = 120;         // san PWM: lenh khac 0 nhung < nguong -> nang len (motor keu ma khong quay = duoi nguong khoi dong)
 volatile long encL = 0;            // dem xung encoder trai
 volatile long encR = 0;            // dem xung encoder phai
-#if DEBUG_MODE
-bool  streamLine = false;          // true = in lien tuc gia tri 8 mat
-#endif
 int   lineRaw[8];                  // gia tri analog 8 mat (C1..C8)
-#if DEBUG_MODE
-int   lineMin[8], lineMax[8];      // min/max moi mat khi cali
-#endif
 int   lineThresh[8];               // nguong rieng moi mat
 bool  lineCalibrated = false;      // da cali chua
 
@@ -221,16 +194,25 @@ int    REACQUIRE_MAX_MM = 220;    // bo toi da bao nhieu mm de tim; qua -> dung 
 float  reacqStartMM = 0;
 
 // ===================== Encoder ISR (quadrature) =====================
+/**
+ * Chức năng: Ngắt encoder bánh trái; cập nhật số xung và chiều quay từ kênh B.
+ */
 void IRAM_ATTR isrEncL() {
   // doc kenh B de biet chieu
   if (digitalRead(ENC_L_B)) encL++; else encL--;
 }
+/**
+ * Chức năng: Ngắt encoder bánh phải; cập nhật số xung và chiều quay từ kênh B.
+ */
 void IRAM_ATTR isrEncR() {
   if (digitalRead(ENC_R_B)) encR++; else encR--;
 }
 
 // ===================== MUX 74HC4067 =====================
 // Doc 1 kenh (0..15)
+/**
+ * Chức năng: Chọn một kênh của MUX 74HC4067 và lấy trung bình bốn mẫu ADC để giảm nhiễu.
+ */
 int readMuxChannel(int ch) {
   digitalWrite(MUX_S0, ch & 0x01);
   digitalWrite(MUX_S1, (ch >> 1) & 0x01);
@@ -244,33 +226,28 @@ int readMuxChannel(int ch) {
 }
 
 // Doc 8 mat line (CH0..CH7 = C1..C8, trai -> phai) vao lineRaw[]
+/**
+ * Chức năng: Đọc liên tiếp tám mắt cảm biến dò line vào mảng lineRaw.
+ */
 void readLine() {
   for (int i = 0; i < 8; i++) lineRaw[i] = readMuxChannel(i);
 }
 
 // In gia tri 8 mat + dang nhi phan theo nguong
-#if DEBUG_MODE
-void printLine() {
-  readLine();
-  Serial.print("RAW: ");
-  for (int i = 0; i < 8; i++) { Serial.printf("%4d ", lineRaw[i]); }
-  Serial.print(" | LINE(den=1): ");
-  for (int i = 0; i < 8; i++) {
-    if (!SENSOR_OK[i]) { Serial.print("x"); continue; }   // mat bi mask
-    int th = lineCalibrated ? lineThresh[i] : LINE_THRESHOLD;
-    Serial.print(lineRaw[i] < th ? "1" : "0");   // den = gia tri thap = 1
-  }
-  Serial.println();
-}
-#endif
 
 // ===================== Motor =====================
 // chieu: +1 thuan, -1 nghich, 0 dung
 // Bu vung chet: neu co lenh chay (dir!=0) ma PWM < nguong khoi dong -> nang len MOTOR_MIN_PWM
+/**
+ * Chức năng: Bù vùng chết động cơ bằng cách nâng PWM quá thấp lên ngưỡng khởi động tối thiểu.
+ */
 static inline int applyMinPwm(int dir, int spd) {
   if (dir != 0 && spd > 0 && spd < MOTOR_MIN_PWM) return MOTOR_MIN_PWM;
   return spd;
 }
+/**
+ * Chức năng: Điều khiển chiều và tốc độ PWM của động cơ A.
+ */
 void setMotorA(int dir, int spd) {
   if (INVERT_A) dir = -dir;
   spd = applyMinPwm(dir, spd);
@@ -278,6 +255,9 @@ void setMotorA(int dir, int spd) {
   digitalWrite(MA_IN2, dir < 0);
   ledcWrite(MA_CH, dir == 0 ? 0 : spd);
 }
+/**
+ * Chức năng: Điều khiển chiều và tốc độ PWM của động cơ B.
+ */
 void setMotorB(int dir, int spd) {
   if (INVERT_B) dir = -dir;
   spd = applyMinPwm(dir, spd);
@@ -285,10 +265,19 @@ void setMotorB(int dir, int spd) {
   digitalWrite(MB_IN4, dir < 0);
   ledcWrite(MB_CH, dir == 0 ? 0 : spd);
 }
+/**
+ * Chức năng: Dừng đồng thời cả hai động cơ.
+ */
 void stopMotors() { setMotorA(0, 0); setMotorB(0, 0); }
 
 // Dieu khien motor theo van toc co dau (-255..255)
+/**
+ * Chức năng: Nhận vận tốc có dấu và chuyển thành chiều quay/PWM cho động cơ A.
+ */
 void driveA(int v) { v = constrain(v, -255, 255); setMotorA(v > 0 ? 1 : (v < 0 ? -1 : 0), abs(v)); }
+/**
+ * Chức năng: Nhận vận tốc có dấu và chuyển thành chiều quay/PWM cho động cơ B.
+ */
 void driveB(int v) { v = constrain(v, -255, 255); setMotorB(v > 0 ? 1 : (v < 0 ? -1 : 0), abs(v)); }
 
 // ===================== MPU6050 (gyro Z) =====================
@@ -302,9 +291,15 @@ float gyroDelta = 0;              // goc gyro tich luy (rad), odometry se tieu t
 unsigned long lastGyroUs = 0;
 const float GYRO_LSB_PER_DPS = 32.8f;    // thang do +-1000 do/s (khop voi mpuWrite(0x1B,0x10))
 
+/**
+ * Chức năng: Ghi một thanh ghi cấu hình vào cảm biến MPU6050 qua I2C.
+ */
 void mpuWrite(uint8_t reg, uint8_t val) {
   Wire.beginTransmission(MPU_ADDR); Wire.write(reg); Wire.write(val); Wire.endTransmission();
 }
+/**
+ * Chức năng: Đọc giá trị thô vận tốc góc quanh trục Z của MPU6050.
+ */
 int16_t mpuGyroZraw() {
   Wire.beginTransmission(MPU_ADDR); Wire.write(0x47);        // GYRO_ZOUT_H
   if (Wire.endTransmission(false) != 0) return 0;
@@ -312,6 +307,9 @@ int16_t mpuGyroZraw() {
   return (int16_t)((Wire.read() << 8) | Wire.read());
 }
 // Do troi tinh gyro - XE PHAI DUNG YEN khi goi
+/**
+ * Chức năng: Tính độ lệch tĩnh của gyro khi xe đứng yên để giảm trôi góc.
+ */
 void gyroCalibrate(int n = 500) {
   if (!mpuOK) { hubLog("[gyro] chua co MPU6050"); return; }
   double sum = 0;
@@ -321,6 +319,9 @@ void gyroCalibrate(int n = 500) {
   hubLog("[gyro] bias Z = " + String(gyroBiasZ, 1) + " LSB (" +
          String(gyroBiasZ / GYRO_LSB_PER_DPS, 2) + " do/s)");
 }
+/**
+ * Chức năng: Khởi tạo I2C, kiểm tra MPU6050 và cấu hình dải đo cùng bộ lọc số.
+ */
 void mpuInit() {
   Wire.begin(MPU_SDA, MPU_SCL, 400000);
   Wire.beginTransmission(MPU_ADDR); Wire.write(0x75);        // WHO_AM_I
@@ -328,84 +329,15 @@ void mpuInit() {
   if (Wire.endTransmission(false) == 0 && Wire.requestFrom((uint8_t)MPU_ADDR, (uint8_t)1) == 1)
     who = Wire.read();
   mpuOK = (who != 0x00 && who != 0xFF);
-  if (!mpuOK) { DBG(">> MPU6050 KHONG THAY (SDA=%d SCL=%d) - dung encoder don thuan\n", MPU_SDA, MPU_SCL); return; }
+  if (!mpuOK) { return; }
   mpuWrite(0x6B, 0x80); delay(100);        // reset
   mpuWrite(0x6B, 0x01); delay(10);         // wake, clock = gyro X (on dinh hon)
   mpuWrite(0x1A, 0x03);                    // DLPF ~44Hz (loc rung motor)
   mpuWrite(0x1B, 0x10);                    // gyro +-1000 do/s (quay tai cho nhanh de vuot +-250 -> bao hoa/clip)
   delay(50);
-  DBG(">> MPU6050 OK (WHO_AM_I=0x%02X, SDA=%d SCL=%d)\n", who, MPU_SDA, MPU_SCL);
   lastGyroUs = micros();
 }
 // Quet bus I2C: liet ke dia chi tim thay. Neu thay MPU ma chua init -> init lai.
-#if DEBUG_MODE
-void i2cScan() {
-  // --- Chan doan muc dien ap 2 chan bus (truoc khi quet) ---
-  // Bus I2C ranh phai o muc CAO (nho tro treo). Neu doc duoc THAP = chan bi
-  // noi xuong GND / thiet bi giu bus -> khong bao gio giao tiep duoc.
-  Wire.end();
-  pinMode(MPU_SDA, INPUT_PULLUP);
-  pinMode(MPU_SCL, INPUT_PULLUP);
-  delay(5);
-  int sdaLv = digitalRead(MPU_SDA), sclLv = digitalRead(MPU_SCL);
-  hubLog("[i2c] Muc bus khi ranh: SDA(32)=" + String(sdaLv ? "CAO" : "THAP <-- LOI") +
-         "  SCL(33)=" + String(sclLv ? "CAO" : "THAP <-- LOI") + "  (dung: ca hai CAO)");
-  if (!sclLv || !sdaLv)
-    hubLog("[i2c] Chan bi ghim xuong GND. Neu SCL(33) THAP: GO HAN day GPIO33 -> MUX S3 (S3 chi noi GND)");
-  Wire.begin(MPU_SDA, MPU_SCL, 100000);   // 100kHz cho on dinh khi quet
-  delay(5);
-
-  String found = "";
-  int n = 0;
-  for (uint8_t a = 1; a < 127; a++) {
-    Wire.beginTransmission(a);
-    if (Wire.endTransmission() == 0) { found += " 0x" + String(a, HEX); n++; }
-    delay(2);
-  }
-  if (n == 0) {
-    hubLog("[i2c] KHONG thay thiet bi nao. Kiem tra: SDA=32, SCL=33, VCC=3.3V, GND chung, AD0=GND");
-    return;
-  }
-  hubLog("[i2c] Thay " + String(n) + " thiet bi:" + found + "   (MPU6050 = 0x68)");
-  if (!mpuOK) { hubLog("[i2c] Thu khoi tao lai MPU6050..."); mpuInit(); if (mpuOK) gyroCalibrate(); }
-}
-
-// Doc va bao cao 8 mat line (test cam bien tu xa)
-void reportLine() {
-  readLine();
-  String s = "[line] RAW:";
-  for (int i = 0; i < 8; i++) s += " " + String(lineRaw[i]);
-  s += " | den=1:";
-  int cnt = 0;
-  for (int i = 0; i < 8; i++) {
-    if (!SENSOR_OK[i]) { s += "x"; continue; }
-    int th = lineCalibrated ? lineThresh[i] : LINE_THRESHOLD;
-    bool black = lineRaw[i] < th;
-    s += black ? "1" : "0";
-    if (black) cnt++;
-  }
-  s += " cnt=" + String(cnt) + (lineCalibrated ? " (da cali)" : " (CHUA cali)");
-  // Sai so sau khi tru trim: 0 = line dung tam. Am = line lech trai, duong = lech phai.
-  if (computeLineError()) s += "  err=" + String(lineError, 2) + " (trim=" + String(LINE_TRIM, 2) + ")";
-  else                    s += "  MAT LINE";
-  hubLog(s);
-}
-
-// Dat TAM LINE tu dong: de xe dung cho muon bam (line duoi vi tri chuan) roi goi ham nay.
-// Sai so tho hien tai se thanh moc 0 => het be lech 1 ben.
-void lineSetZero() {
-  float save = LINE_TRIM;
-  LINE_TRIM = 0;                     // do sai so THO (chua tru trim)
-  if (!computeLineError()) {
-    LINE_TRIM = save;
-    hubLog("[linezero] KHONG thay line - dat xe len vach roi thu lai");
-    return;
-  }
-  LINE_TRIM = lineError;             // lay chinh no lam tam
-  hubLog("[linezero] Da dat tam line: trim=" + String(LINE_TRIM, 2) +
-         " (truoc=" + String(save, 2) + "). Gio line o vi tri nay = err 0.");
-}
-#endif
 
 // Toc do goc hien tai (do/s) tu gyro. 0 neu khong co MPU.
 float gyroRateDps() {
@@ -414,6 +346,9 @@ float gyroRateDps() {
 }
 
 // Lay mau gyro va cong don goc. Tu gioi han ~250Hz.
+/**
+ * Chức năng: Lấy mẫu gyro theo chu kỳ và tích phân vận tốc góc thành góc quay.
+ */
 void updateGyro() {
   if (!mpuOK) return;
   unsigned long now = micros();
@@ -427,6 +362,9 @@ void updateGyro() {
 
 // ===================== Odometry =====================
 // Cap nhat toa do (x,y,theta): quang duong tu encoder, GOC hop nhat encoder + gyro.
+/**
+ * Chức năng: Cập nhật tọa độ x, y và hướng xe bằng encoder kết hợp gyro.
+ */
 void updateOdometry() {
   updateGyro();                                // lay mau gyro (tu gioi han nhip)
   long l = encL, r = encR;
@@ -450,6 +388,9 @@ void updateOdometry() {
   poseTheta += dTheta;
 }
 
+/**
+ * Chức năng: Đưa bộ đếm encoder và trạng thái odometry về gốc.
+ */
 void resetOdometry() {
   encL = 0; encR = 0; lastOdoL = 0; lastOdoR = 0;
   poseX = poseY = poseTheta = 0;
@@ -457,16 +398,13 @@ void resetOdometry() {
 }
 
 // In toa do hien tai
-#if DEBUG_MODE
-void printPose() {
-  Serial.printf("[pose] x=%.1fmm  y=%.1fmm  theta=%.1f deg  (encL=%ld encR=%ld)\n",
-                poseX, poseY, poseTheta * 180.0f / PI, encL, encR);
-}
-#endif
 
 // ===================== Tinh sai so line =====================
 // Tra ve TRUE neu thay line. Cap nhat lineError (am=line lech trai, duong=phai).
 // Den = gia tri THAP -> mat thay line khi raw < nguong.
+/**
+ * Chức năng: Tính sai số vị trí line từ các cảm biến còn hoạt động và phát hiện mất line.
+ */
 bool computeLineError() {
   readLine();
   // trong so vi tri C1..C8: -3.5 .. +3.5 (giua C4-C5 = 0)
@@ -488,6 +426,9 @@ bool computeLineError() {
 }
 
 // Chi phan PID + xuat dong co (gia dinh computeLineError() vua tra TRUE).
+/**
+ * Chức năng: Tính hiệu chỉnh PID và phân phối tốc độ cho hai bánh để bám line.
+ */
 void lineDrivePID() {
   errIntegral += lineError;
   errIntegral = constrain(errIntegral, -50, 50);
@@ -500,6 +441,9 @@ void lineDrivePID() {
 }
 
 // ===================== Vong dieu khien bam line (che do THU CONG 'g') =====================
+/**
+ * Chức năng: Thực hiện một chu kỳ bám line; khi mất line sẽ quay tìm theo sai số gần nhất.
+ */
 void lineFollowStep() {
   if (!computeLineError()) {
     // Mat line: quay tai cho theo huong lech cuoi cung de tim lai.
@@ -520,6 +464,9 @@ void lineFollowStep() {
 // lien tuc, DUNG NGAY khi da quay du (|goc| >= |deg| - LEAD). LEAD (rieng trai/phai) bu phan
 // xe con truot them sau khi cat dien. KHONG servo/sua lui -> quay 1 lan roi thoi, khong lac.
 // Neu KHONG co gyro -> fallback open-loop theo thoi gian (ms/do) nhu truoc.
+/**
+ * Chức năng: Quay xe một góc tương đối; ưu tiên phản hồi gyro và dùng thời gian khi không có gyro.
+ */
 void turnRelative(float deg) {
   if (fabs(deg) < 0.5f) return;
   float startTheta = poseTheta;
@@ -567,6 +514,9 @@ void turnRelative(float deg) {
 
 // ===================== Tien ich =====================
 // Phat tone tan so freq (Hz) trong ms mili-giay
+/**
+ * Chức năng: Phát âm báo bằng PWM với tần số và thời lượng cho trước.
+ */
 void buzzerTone(int freq, int ms) {
   ledcSetup(BUZZER_CH, freq, 8);
   ledcAttachPin(BUZZER, BUZZER_CH);
@@ -574,52 +524,15 @@ void buzzerTone(int freq, int ms) {
   delay(ms);
   ledcWrite(BUZZER_CH, 0);
 }
+/**
+ * Chức năng: Phát một tiếng bíp ngắn ở tần số mặc định.
+ */
 void beep(int ms) { buzzerTone(2000, ms); }
 
 // ===================== Cali line =====================
-#if DEBUG_MODE
-void saveCalibration();   // dinh nghia o duoi (NVS) - forward declare
-// Quy trinh: dem nguoc 5s (tick) -> tone bat dau -> quet thanh cam bien
-// qua vach den va nen trang trong 5s -> tone ket thuc -> tinh nguong rieng.
-void calibrateLine() {
-  Serial.println(F("\n== CALI LINE: chuan bi, bat dau sau 5 giay... =="));
-  for (int s = 5; s >= 1; s--) {           // dem nguoc, moi giay 1 tick ngan
-    Serial.printf("  %d...\n", s);
-    buzzerTone(1000, 60);
-    delay(940);
-  }
-  buzzerTone(1800, 400);                    // TONE BAT DAU (cao, dai)
-  hubLog(">> QUET thanh cam bien qua VACH va NEN NGAY BAY GIO (5s)!");
-
-  for (int i = 0; i < 8; i++) { lineMin[i] = 4095; lineMax[i] = 0; }
-  unsigned long end = millis() + 5000;
-  while (millis() < end) {
-    readLine();
-    for (int i = 0; i < 8; i++) {
-      if (lineRaw[i] < lineMin[i]) lineMin[i] = lineRaw[i];
-      if (lineRaw[i] > lineMax[i]) lineMax[i] = lineRaw[i];
-    }
-    delay(4);
-  }
-  for (int i = 0; i < 8; i++) lineThresh[i] = (lineMin[i] + lineMax[i]) / 2;
-  lineCalibrated = true;
-
-  buzzerTone(2600, 150); delay(80); buzzerTone(2600, 250);  // TONE KET THUC (2 beep)
-  String rep = "[calib] XONG. thresh:";
-  for (int i = 0; i < 8; i++) rep += " C" + String(i + 1) + "=" + String(lineThresh[i]);
-  hubLog(rep);
-  saveCalibration();   // luu vao NVS de tu nap lan sau
-}
-
-// ===================== NVS: luu/nap calibration =====================
-void saveCalibration() {
-  prefs.begin("line", false);
-  prefs.putBytes("thresh", lineThresh, sizeof(lineThresh));
-  prefs.putBool("done", true);
-  prefs.end();
-  Serial.println(F(">> Da luu calibration vao NVS (tu nap lan sau)"));
-}
-#endif
+/**
+ * Chức năng: Đọc ngưỡng cảm biến line đã hiệu chuẩn từ bộ nhớ NVS.
+ */
 bool loadCalibration() {
   prefs.begin("line", true);
   bool done = prefs.getBool("done", false);
@@ -627,243 +540,24 @@ bool loadCalibration() {
   prefs.end();
   if (done) {
     lineCalibrated = true;
-#if DEBUG_MODE
-    Serial.print(F(">> Da nap calibration tu NVS: "));
-    for (int i = 0; i < 8; i++) Serial.printf("%d ", lineThresh[i]);
-    Serial.println();
-#endif
   }
   return done;
 }
 
+/**
+ * Chức năng: Đổi số xung encoder thành quãng đường milimét.
+ */
 float pulsesToMM(long pulses) {
   float circ = PI * WHEEL_DIAMETER_MM;       // chu vi
   return (float)pulses / ENCODER_PPR * circ; // quang duong
 }
 
-#if DEBUG_MODE
-void printMenu() {
-  Serial.println(F("\n===== MENU TEST / HIEU CHUAN ====="));
-  Serial.println(F("--- MOTOR (2 banh) ---"));
-  Serial.println(F("  f = ca 2 banh tien     b = ca 2 banh lui"));
-  Serial.println(F("  l = quay trai          r = quay phai"));
-  Serial.println(F("  1 = chi banh TRAI tien 2 = chi banh PHAI tien"));
-  Serial.println(F("  x = dung               + / - = tang/giam toc"));
-  Serial.println(F("  v<so> = dat toc do (vd v200)"));
-  Serial.println(F("--- ENCODER ---"));
-  Serial.println(F("  e = reset bo dem       p = in xung + quang duong"));
-  Serial.println(F("--- SERVO ---"));
-  Serial.println(F("  o = THA hang           h = GIU hang"));
-  Serial.println(F("  s<goc> = dat goc servo (vd s45)"));
-  Serial.println(F("  H<goc> = dat goc GIU   D<goc> = dat goc THA"));
-  Serial.println(F("--- DO LINE (MUX) ---"));
-  Serial.println(F("  m = in 8 mat lien tuc  M = dung in"));
-  Serial.println(F("  n = in 8 mat 1 lan"));
-  Serial.println(F("  c = CALI line (5s dem nguoc + tone, roi quet cam bien)"));
-  Serial.println(F("--- BAM LINE (PID) + ODOMETRY ---"));
-  Serial.println(F("  g = bat dau bam line   x = dung"));
-  Serial.println(F("  B<so> = toc do co ban  (vd B130)"));
-  Serial.println(F("  kp<so> kd<so> ki<so> = chinh he so PID (vd kp25)"));
-  Serial.println(F("  q = in vi tri (x,y,theta)   e = reset odometry"));
-  Serial.println(F("--- RE (CO DINH: PWM + thoi gian) ---"));
-  Serial.println(F("  T<goc> = re tai cho (vd T90, T-90)"));
-  Serial.println(F("  Tm<so> = PWM re co dinh (chung 2 ben)"));
-  Serial.println(F("  TsL<so> TsR<so> = ms/do rieng trai/phai   ToL<so> ToR<so> = ms chet rieng"));
-  Serial.println(F("  TI = dao chieu actuation vong re"));
-  Serial.println(F("--- CAU HINH MANG (WiFi + IP laptop) ---"));
-  Serial.println(F("  Wn<ten> = ten WiFi     Wp<mk> = mat khau"));
-  Serial.println(F("  Wh<ip>  = IP laptop    Ws = luu + ket noi lai"));
-  Serial.println(F("  W       = xem cau hinh hien tai"));
-  Serial.println(F("--- KHAC ---"));
-  Serial.println(F("  z = buzzer beep        ? = menu nay"));
-  Serial.println(F("==================================\n"));
-}
-
-// ===================== Xu ly lenh =====================
-void handleCommand(String cmd) {
-  cmd.trim();
-  if (cmd.length() == 0) return;
-  char c = cmd.charAt(0);
-
-  switch (c) {
-    // ----- Motor -----
-    case 'f': setMotorA(+1, motorSpeed); setMotorB(+1, motorSpeed);
-              Serial.println("Ca 2 banh TIEN"); break;
-    case 'b': setMotorA(-1, motorSpeed); setMotorB(-1, motorSpeed);
-              Serial.println("Ca 2 banh LUI"); break;
-    case 'l': setMotorA(-1, motorSpeed); setMotorB(+1, motorSpeed);
-              Serial.println("Quay TRAI"); break;
-    case 'r': setMotorA(+1, motorSpeed); setMotorB(-1, motorSpeed);
-              Serial.println("Quay PHAI"); break;
-    case '1': setMotorA(+1, motorSpeed); setMotorB(0, 0);
-              Serial.println("Chi banh TRAI tien"); break;
-    case '2': setMotorA(0, 0); setMotorB(+1, motorSpeed);
-              Serial.println("Chi banh PHAI tien"); break;
-    case 'x': lineFollow = false; stopMotors(); Serial.println("DUNG"); break;
-    case '+': motorSpeed = min(255, motorSpeed + 10);
-              Serial.printf("Toc do = %d\n", motorSpeed); break;
-    case '-': motorSpeed = max(0, motorSpeed - 10);
-              Serial.printf("Toc do = %d\n", motorSpeed); break;
-    case 'v': motorSpeed = constrain(cmd.substring(1).toInt(), 0, 255);
-              Serial.printf("Toc do = %d\n", motorSpeed); break;
-
-    // ----- Encoder / Odometry -----
-    case 'e': resetOdometry(); Serial.println("Reset encoder + odometry"); break;
-    case 'q': printPose(); break;
-    case 'p': {
-      long l = encL, r = encR;
-      Serial.printf("Encoder  L=%ld (%.1f mm)  R=%ld (%.1f mm)\n",
-                    l, pulsesToMM(l), r, pulsesToMM(r));
-      break;
-    }
-
-    // ----- Servo -----
-    case 'o': servo.write(SERVO_DROP); Serial.printf("THA hang (goc %d)\n", SERVO_DROP); break;
-    case 'h': servo.write(SERVO_HOLD); Serial.printf("GIU hang (goc %d)\n", SERVO_HOLD); break;
-    case 's': { int a = constrain(cmd.substring(1).toInt(), 0, 180);
-                servo.write(a); Serial.printf("Servo -> %d do\n", a); break; }
-    case 'H': SERVO_HOLD = constrain(cmd.substring(1).toInt(), 0, 180);
-              Serial.printf("Goc GIU = %d\n", SERVO_HOLD); break;
-    case 'D': SERVO_DROP = constrain(cmd.substring(1).toInt(), 0, 180);
-              Serial.printf("Goc THA = %d\n", SERVO_DROP); break;
-
-    // ----- Tu test motor -----
-    case 't': {
-      Serial.println(">> TEST: A tien 1.5s");
-      setMotorA(+1, 200); setMotorB(0,0); delay(1500);
-      Serial.println(">> TEST: A lui 1.5s");
-      setMotorA(-1, 200); delay(1500); stopMotors(); delay(500);
-      Serial.println(">> TEST: B tien 1.5s");
-      setMotorB(+1, 200); setMotorA(0,0); delay(1500);
-      Serial.println(">> TEST: B lui 1.5s");
-      setMotorB(-1, 200); delay(1500); stopMotors();
-      Serial.println(">> TEST xong");
-      break;
-    }
-    // ----- Re co dinh (open-loop) -----
-    case 'T':
-      if (cmd.length() > 1 && cmd.charAt(1) == 'I') { INVERT_TURN = !INVERT_TURN; Serial.printf("INVERT_TURN=%d\n", INVERT_TURN); }
-      else if (cmd.length() > 1 && cmd.charAt(1) == 'm') { TURN_OPEN_PWM = cmd.substring(2).toInt(); Serial.printf("TURN_OPEN_PWM=%d\n", TURN_OPEN_PWM); }
-      else if (cmd.length() > 2 && cmd.charAt(1) == 's' && cmd.charAt(2) == 'L') { TURN_MS_PER_DEG_L = cmd.substring(3).toFloat(); Serial.printf("TURN_MS_PER_DEG_L=%.2f\n", TURN_MS_PER_DEG_L); }
-      else if (cmd.length() > 2 && cmd.charAt(1) == 's' && cmd.charAt(2) == 'R') { TURN_MS_PER_DEG_R = cmd.substring(3).toFloat(); Serial.printf("TURN_MS_PER_DEG_R=%.2f\n", TURN_MS_PER_DEG_R); }
-      else if (cmd.length() > 2 && cmd.charAt(1) == 'o' && cmd.charAt(2) == 'L') { TURN_MS_OFFSET_L = cmd.substring(3).toFloat(); Serial.printf("TURN_MS_OFFSET_L=%.1f\n", TURN_MS_OFFSET_L); }
-      else if (cmd.length() > 2 && cmd.charAt(1) == 'o' && cmd.charAt(2) == 'R') { TURN_MS_OFFSET_R = cmd.substring(3).toFloat(); Serial.printf("TURN_MS_OFFSET_R=%.1f\n", TURN_MS_OFFSET_R); }
-      else {
-        float deg = cmd.substring(1).toFloat();
-        Serial.printf(">> Re %.0f do...\n", deg);
-        turnRelative(deg);
-      }
-      break;
-
-    case 'i': // dao chieu runtime: iA hoac iB
-      if (cmd.indexOf('A') > 0 || cmd.indexOf('a') > 0) { INVERT_A = !INVERT_A; Serial.printf("INVERT_A=%d\n", INVERT_A); }
-      else if (cmd.indexOf('B') > 0 || cmd.indexOf('b') > 0) { INVERT_B = !INVERT_B; Serial.printf("INVERT_B=%d\n", INVERT_B); }
-      else Serial.println("Dung: iA hoac iB");
-      break;
-
-    // ----- Do line (MUX) -----
-    case 'm': streamLine = true;  Serial.println("Stream 8 mat: ON"); break;
-    case 'M': streamLine = false; Serial.println("Stream 8 mat: OFF"); break;
-    case 'n': printLine(); break;
-    case 'c': calibrateLine(); break;
-
-    // ----- Bam line PID -----
-    case 'g':
-      lineFollow = true; lastError = 0; errIntegral = 0;
-      Serial.println("BAM LINE: ON");
-      break;
-    case 'B': baseSpeed = constrain(cmd.substring(1).toInt(), 0, 255);
-              Serial.printf("baseSpeed = %d\n", baseSpeed); break;
-    case 'k':
-      if (cmd.startsWith("kp")) { Kp = cmd.substring(2).toFloat(); Serial.printf("Kp=%.2f\n", Kp); }
-      else if (cmd.startsWith("ki")) { Ki = cmd.substring(2).toFloat(); Serial.printf("Ki=%.2f\n", Ki); }
-      else if (cmd.startsWith("kd")) { Kd = cmd.substring(2).toFloat(); Serial.printf("Kd=%.2f\n", Kd); }
-      else Serial.println("Dung: kp.. / ki.. / kd..");
-      break;
-
-    // ----- Cau hinh mang (WiFi + IP hub) -----
-    // Wn<ten>  = dat ten WiFi     Wp<mk> = dat mat khau
-    // Wh<ip>   = dat IP laptop/hub Ws     = luu NVS + ket noi lai
-    // W        = xem cau hinh hien tai
-    case 'W': {
-      if (cmd.length() == 1) {
-        Serial.printf("SSID='%s'  PASS='%s'  HUB=%s:%d\n",
-                      cfgSsid.c_str(), cfgPass.c_str(), cfgHub.c_str(), HUB_PORT);
-        break;
-      }
-      char sub = cmd.charAt(1);
-      String val = cmd.substring(2); val.trim();
-      if (sub == 'n')      { cfgSsid = val; Serial.printf("SSID = '%s'\n", cfgSsid.c_str()); }
-      else if (sub == 'p') { cfgPass = val; Serial.printf("PASS = '%s'\n", cfgPass.c_str()); }
-      else if (sub == 'h') { cfgHub  = val; Serial.printf("HUB  = %s\n", cfgHub.c_str()); }
-      else if (sub == 's') {
-        saveNetConfig();
-        Serial.println(F(">> Ket noi lai voi cau hinh moi..."));
-        WiFi.disconnect(); wifiOK = false; hubOK = false;
-        setupWiFi();          // -> onWifiUp() tu bat web + hub + OTA
-      }
-      else Serial.println(F("Dung: Wn<ten> / Wp<mk> / Wh<ip> / Ws (luu+ket noi) / W (xem)"));
-      break;
-    }
-
-    // ----- Khac -----
-    case 'z': beep(150); Serial.println("Beep"); break;
-    case '?': printMenu(); break;
-    default:  Serial.printf("Lenh khong hieu: '%s' (go ? de xem menu)\n", cmd.c_str());
-  }
-}
-#endif
-
-// ===================== Web server =====================
-#if DEBUG_MODE
-const char PAGE_HTML[] PROGMEM = R"HTML(
-<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ESP32 Car</title>
-<style>
- body{font-family:system-ui,sans-serif;text-align:center;background:#111;color:#eee;margin:0;padding:20px}
- h1{font-size:1.4em}
- button{font-size:1.6em;padding:22px 0;width:80%;margin:12px 0;border:0;border-radius:14px;color:#fff;font-weight:700}
- .start{background:#1e9e54}.stop{background:#c0392b}
- #st{font-size:1.1em;margin-top:18px;line-height:1.7em}
- .on{color:#2ecc71}.off{color:#e74c3c}
-</style></head><body>
-<h1>🚗 ESP32 Car — Bám line</h1>
-<button class="start" onclick="cmd('start')">▶ START</button>
-<button class="stop" onclick="cmd('stop')">■ STOP</button>
-<div id="st">...</div>
-<script>
- function cmd(c){fetch('/'+c).then(()=>upd())}
- function upd(){fetch('/status').then(r=>r.json()).then(s=>{
-   document.getElementById('st').innerHTML=
-    'Trạng thái: <b class="'+(s.run?'on':'off')+'">'+(s.run?'ĐANG CHẠY':'DỪNG')+'</b><br>'+
-    'err='+s.err.toFixed(2)+(s.lost?' ⚠️ MẤT LINE':'')+'<br>'+
-    'x='+s.x+' y='+s.y+' θ='+s.th+'°';
- }).catch(()=>{})}
- setInterval(upd,400);upd();
-</script></body></html>
-)HTML";
-
-void handleRoot()   { server.send_P(200, "text/html", PAGE_HTML); }
-void handleStart()  { lineFollow = true; lastError = 0; errIntegral = 0;
-                      Serial.println("[web] START bam line");
-                      server.send(200, "text/plain", "started"); }
-void handleStop()   { lineFollow = false; stopMotors();
-                      Serial.println("[web] STOP");
-                      server.send(200, "text/plain", "stopped"); }
-void handleStatus() {
-  char buf[160];
-  snprintf(buf, sizeof(buf),
-    "{\"run\":%d,\"err\":%.2f,\"lost\":%d,\"x\":%.0f,\"y\":%.0f,\"th\":%.0f}",
-    lineFollow ? 1 : 0, lineError, lineLost ? 1 : 0,
-    poseX, poseY, poseTheta * 180.0f / PI);
-  server.send(200, "application/json", buf);
-}
-#endif
-
 // ===================== DIEU PHOI: route tu hub =====================
 // Gui trang thai xe ve hub (khop {status,node,pos,cargo} ma server.js cho).
 // Frame odometry TRUNG frame map (HOME=(0,0), nhin +x=0deg) nen gui thang pose.
+/**
+ * Chức năng: Gửi trạng thái, vị trí và tình trạng hàng hóa của xe về hub.
+ */
 void sendTelemetry() {
   if (!hubOK) return;
   const char* st = running ? (cargo ? "moving" : "arrived") : "idle";
@@ -877,11 +571,11 @@ void sendTelemetry() {
   wsClient.sendTXT(buf);
 }
 
-// In log ra Serial VA day len hub duoi dang {type:"clog",text:...} de web hien thi.
+// Gửi thông báo dạng {type:"clog",text:...} lên hub để giao diện hiển thị.
+/**
+ * Chức năng: Gửi thông báo vận hành dạng JSON về giao diện quản lý qua WebSocket.
+ */
 void hubLog(const String& s) {
-#if DEBUG_MODE
-  Serial.println(s);
-#endif
   if (!hubOK) return;
   JsonDocument d;
   d["type"] = "clog";
@@ -892,6 +586,9 @@ void hubLog(const String& s) {
 }
 
 // Lai tay F/B/L/R (huy route dang chay). 'S'/khac = dung.
+/**
+ * Chức năng: Điều khiển xe thủ công theo các hướng tiến, lùi, trái, phải hoặc dừng.
+ */
 void doManual(const String& dir) {
   running = false; lineFollow = false; routeTarget = "";
   char d = dir.length() ? dir.charAt(0) : 'S';
@@ -909,6 +606,9 @@ void doManual(const String& dir) {
 }
 
 // Tha hang: dung -> ha servo -> beep -> ve goc giu.
+/**
+ * Chức năng: Dừng xe, điều khiển servo thả hàng rồi đưa servo về vị trí giữ.
+ */
 void doDrop() {
   stopMotors();
   servo.write(SERVO_DROP);
@@ -922,6 +622,9 @@ void doDrop() {
 
 // Bao 1 buoc da xong (ok/that bai) ve server + dung cho buoc ke.
 // HOME (buoc cuoi 1 chuyen) hoac that bai -> ket thuc chuyen (running=false).
+/**
+ * Chức năng: Kết thúc một bước lộ trình, báo kết quả và hiệu chỉnh lại odometry tại node.
+ */
 void finishStep(bool ok, const String& reason) {
   stopMotors();
   String act = curAction;
@@ -958,6 +661,9 @@ void finishStep(bool ok, const String& reason) {
 // Nap 1 buoc tu server va bat dau thuc thi. seq==0 -> chuyen moi (reset odometry tai HOME).
 // nodeX/nodeY: toa do node xe se toi (server gui de re-anchor); nodeValid=false -> khong snap.
 // nodeTh (rad): huong doan di vao node; nodeThValid=false -> khong snap huong.
+/**
+ * Chức năng: Nhận và khởi tạo trạng thái cho một bước lộ trình mới từ server.
+ */
 void beginStep(const String& action, float dist, int seq, float nodeX, float nodeY, bool nodeValid,
                float nodeTh, bool nodeThValid) {
   if (seq == 0) resetOdometry();     // xe dang o HOME -> xoa troi tich luy
@@ -975,6 +681,9 @@ void beginStep(const String& action, float dist, int seq, float nodeX, float nod
 // Thuc thi 1 nhip cua buoc HIEN TAI (goi trong loop khi running && curAction != "").
 // Xong 1 buoc -> finishStep(...) (gui stepdone + idle cho buoc ke tu server).
 // Moi buoc L/R/B = RE truoc (0/+90/-90/180) roi TIEN 1 canh toi giao diem/het line.
+/**
+ * Chức năng: Máy trạng thái thực thi bước rẽ, tìm line, chạy tới giao điểm và căn tâm xe.
+ */
 void stepExec() {
   String s = curAction;
 
@@ -1086,64 +795,20 @@ void stepExec() {
 }
 
 // ===================== Hieu chuan quang duong =====================
-#if DEBUG_MODE
-// Chay thang bam line tu giao diem hien tai -> giao diem ke (biet knownMM, mac dinh 475).
-//
-// ⚠️ DAT XE: THANH CAM BIEN phai nam NGAY TREN vach ngang cua nga tu xuat phat
-//    (KHONG phai truc banh!). Ly do: ta dem quang duong tu luc bat dau (cam bien @ nga tu 1)
-//    den luc CAM BIEN thay nga tu 2 -> dung bang 1 canh (475mm). Neu can truc banh vao
-//    nga tu thi cam bien da o truoc 145mm -> do ra ~330mm -> goi y duong kinh sai.
-void calibDistance(float knownMM) {
-  running = false; lineFollow = false;
-  resetOdometry();
-  leftStart = false;
-  hubLog("[caldist] Chay toi nga tu ke (biet " + String(knownMM, 0) +
-         "mm). Luu y: dat THANH CAM BIEN tren nga tu xuat phat.");
-
-  unsigned long t0 = millis();
-  // Quang duong TIEN = trung binh CO DAU cua 2 banh.
-  // (Dung fabs() la SAI: khi mat line xe xoay tai cho -> L am, R duong -> fabs cong don
-  //  thanh "da di xa" du xe dung im -> so do rac.)
-  auto travel = []() { return (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f; };
-  const char* why = "TIMEOUT (khong thay nga tu ke)";   // ly do dung
-  while (millis() - t0 < 8000) {                 // timeout 8s
-    updateOdometry();
-    lineFollowStep();                            // bam line 1 nhip
-    float trav = travel();
-    if (!leftStart && lineCount <= 2 && !lineLost) leftStart = true;   // da roi giao diem xuat phat
-    if (trav > MIN_EDGE) {
-      if (leftStart && lineCount >= INTERSECT_N) { why = "thay nga tu ke";       break; }
-      if (leftStart && lineLost)                 { why = "MAT LINE (do khong tin)"; break; }
-      if (trav > MAX_EDGE)                       { why = "qua MAX_EDGE (do khong tin)"; break; }
-    }
-    delay(5);
-  }
-  stopMotors();
-
-  float measured = travel();
-  bool  ok = (strcmp(why, "thay nga tu ke") == 0) && measured > MIN_EDGE;
-  float suggest = (measured > 1) ? WHEEL_DIAMETER_MM * knownMM / measured : WHEEL_DIAMETER_MM;
-  char buf[220];
-  snprintf(buf, sizeof(buf),
-    "[caldist] %s | biet=%.0fmm do=%.1fmm (encL=%ld encR=%ld) | WHEEL_D hien=%.2f -> goi y=%.2fmm%s",
-    why, knownMM, measured, encL, encR, WHEEL_DIAMETER_MM, suggest,
-    ok ? "" : "   << KHONG DUNG SO NAY, do lai!");
-  hubLog(buf);
-}
-#endif
 
 // Su kien WebSocket toi hub.
+/**
+ * Chức năng: Xử lý kết nối WebSocket và các lệnh vận hành chính do hub gửi xuống.
+ */
 void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
   switch (type) {
     case WStype_CONNECTED:
       hubOK = true;
       wsClient.sendTXT("{\"role\":\"car\"}");
-      DBGLN("[ws] Da ket noi hub, khai bao role=car");
       hubLog("[fw] build " __DATE__ " " __TIME__);   // danh dau ban firmware dang chay (xac minh OTA)
       break;
     case WStype_DISCONNECTED:
       hubOK = false;
-      DBGLN("[ws] Mat ket noi hub");
       break;
     case WStype_TEXT: {
       JsonDocument doc;
@@ -1156,80 +821,6 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
       else if (!strcmp(cmd, "stop"))   { running = false; curAction = ""; lineFollow = false; stopMotors(); routeTarget = ""; hubLog("[ws] STOP"); }
       else if (!strcmp(cmd, "manual")) doManual(String((const char*)(doc["dir"] | "S")));
       else if (!strcmp(cmd, "drop"))   doDrop();
-#if DEBUG_MODE
-      else if (!strcmp(cmd, "calib"))  { hubLog("[calib] Bat dau hieu chuan line..."); calibrateLine(); }
-      else if (!strcmp(cmd, "tune")) {                  // chinh tham so runtime tu web
-        if (!doc["base"].isNull())     baseSpeed     = constrain((int)doc["base"], 0, 255);
-        if (!doc["min"].isNull())      MOTOR_MIN_PWM = constrain((int)doc["min"], 0, 255);
-        if (!doc["kp"].isNull())       Kp = (float)doc["kp"];
-        if (!doc["kd"].isNull())       Kd = (float)doc["kd"];
-        if (!doc["openpwm"].isNull())    TURN_OPEN_PWM = constrain((int)doc["openpwm"], 0, 255);
-        if (!doc["leadL"].isNull())      TURN_LEAD_DEG_L = (float)doc["leadL"];  // do dung som bu quan tinh (trai)
-        if (!doc["leadR"].isNull())      TURN_LEAD_DEG_R = (float)doc["leadR"];  // (phai)
-        if (!doc["msperdegL"].isNull())  TURN_MS_PER_DEG_L = (float)doc["msperdegL"];
-        if (!doc["msperdegR"].isNull())  TURN_MS_PER_DEG_R = (float)doc["msperdegR"];
-        if (!doc["msoffsetL"].isNull())  TURN_MS_OFFSET_L = (float)doc["msoffsetL"];
-        if (!doc["msoffsetR"].isNull())  TURN_MS_OFFSET_R = (float)doc["msoffsetR"];
-        if (!doc["speed"].isNull())    motorSpeed = constrain((int)doc["speed"], 0, 255);
-        if (!doc["wheeld"].isNull())   WHEEL_DIAMETER_MM = (float)doc["wheeld"];
-        if (!doc["ppr"].isNull())      ENCODER_PPR = (int)doc["ppr"];
-        if (!doc["wbase"].isNull())    WHEEL_BASE_MM = (float)doc["wbase"];
-        if (!doc["center"].isNull())   CENTER_OFFSET_MM = constrain((int)doc["center"], 0, 300);
-        if (!doc["reacqmax"].isNull()) REACQUIRE_MAX_MM = constrain((int)doc["reacqmax"], 20, 500);
-        if (!doc["reacqspd"].isNull()) REACQUIRE_SPEED = constrain((int)doc["reacqspd"], 0, 255);
-        if (!doc["intersectn"].isNull()) INTERSECT_N = constrain((int)doc["intersectn"], 2, 7);
-        if (!doc["trim"].isNull())     LINE_TRIM = (float)doc["trim"];
-        if (!doc["gyrow"].isNull())    GYRO_W = constrain((float)doc["gyrow"], 0.0f, 1.0f);
-        if (!doc["gyrosign"].isNull()) GYRO_SIGN = ((int)doc["gyrosign"] >= 0) ? 1 : -1;
-        hubLog("[tune] base=" + String(baseSpeed) + " min=" + String(MOTOR_MIN_PWM) +
-               " kp=" + String(Kp, 1) + " kd=" + String(Kd, 1) +
-               " openpwm=" + String(TURN_OPEN_PWM) +
-               " leadL=" + String(TURN_LEAD_DEG_L, 2) + " leadR=" + String(TURN_LEAD_DEG_R, 2) +
-               " msperdegL=" + String(TURN_MS_PER_DEG_L, 2) + " msperdegR=" + String(TURN_MS_PER_DEG_R, 2) +
-               " msoffsetL=" + String(TURN_MS_OFFSET_L, 1) + " msoffsetR=" + String(TURN_MS_OFFSET_R, 1) +
-               " speed=" + String(motorSpeed) +
-               " wheeld=" + String(WHEEL_DIAMETER_MM, 2) + " ppr=" + String(ENCODER_PPR) +
-               " wbase=" + String(WHEEL_BASE_MM, 1) + " center=" + String(CENTER_OFFSET_MM) +
-               " intersectn=" + String(INTERSECT_N) +
-               " gyro=" + String(mpuOK ? "OK" : "--") + " gyrow=" + String(GYRO_W, 2) +
-               " gyrosign=" + String(GYRO_SIGN));
-      }
-      else if (!strcmp(cmd, "turn")) {                  // test 1 cu re (deg): +trai / -phai
-        float deg = doc["deg"] | 90.0;
-        hubLog("[turn] test re " + String(deg, 0) + " do...");
-        turnRelative(deg);
-      }
-      else if (!strcmp(cmd, "enc")) {                   // doc encoder (hieu chuan chieu dem)
-        if (!doc["reset"].isNull()) resetOdometry();
-        hubLog("[enc] L=" + String(encL) + " R=" + String(encR) +
-               " x=" + String(poseX, 0) + " y=" + String(poseY, 0) +
-               " th=" + String(poseTheta * 180.0f / PI, 1) +
-               " | gyro=" + String(mpuOK ? "OK" : "--") +
-               (mpuOK ? (" wz=" + String((mpuGyroZraw() - gyroBiasZ) / GYRO_LSB_PER_DPS, 1) + "do/s") : ""));
-      }
-      else if (!strcmp(cmd, "caldist")) {               // hieu chuan quang duong (1 canh line)
-        calibDistance(doc["known"] | 475.0);
-      }
-      else if (!strcmp(cmd, "gyrocal")) {               // do lai troi tinh gyro (xe phai dung yen)
-        stopMotors();
-        hubLog("[gyro] Do troi tinh - GIU XE DUNG YEN...");
-        gyroCalibrate();
-      }
-      else if (!strcmp(cmd, "i2cscan"))  i2cScan();      // quet bus I2C (tim MPU6050)
-      else if (!strcmp(cmd, "line"))     reportLine();   // doc 8 mat line
-      else if (!strcmp(cmd, "linezero")) lineSetZero();  // dat tam line = vi tri hien tai
-      else if (!strcmp(cmd, "servo")) {                 // test servo tay tu web (KHONG dong cargo/beep)
-        if (!doc["angle"].isNull()) {
-          int a = constrain((int)doc["angle"], 0, 180);
-          servo.write(a);
-          hubLog("[servo] -> " + String(a) + " do (test)");
-        } else {
-          const char* action = doc["action"] | "";
-          if      (!strcmp(action, "drop")) { servo.write(SERVO_DROP); hubLog("[servo] THA (test, goc " + String(SERVO_DROP) + ")"); }
-          else if (!strcmp(action, "hold")) { servo.write(SERVO_HOLD); hubLog("[servo] GIU (test, goc " + String(SERVO_HOLD) + ")"); }
-        }
-      }
-#endif
       break;
     }
     default: break;
@@ -1237,44 +828,49 @@ void onWsEvent(WStype_t type, uint8_t* payload, size_t len) {
 }
 
 // ===================== NVS: luu/nap cau hinh mang =====================
+/**
+ * Chức năng: Nạp SSID, mật khẩu WiFi và địa chỉ hub từ NVS.
+ */
 void loadNetConfig() {
   prefs.begin("net", true);
   cfgSsid = prefs.getString("ssid", WIFI_SSID);
   cfgPass = prefs.getString("pass", WIFI_PASS);
   cfgHub  = prefs.getString("hub",  HUB_HOST);
   prefs.end();
-  DBG(">> Cau hinh mang: SSID='%s'  HUB=%s\n", cfgSsid.c_str(), cfgHub.c_str());
 }
+/**
+ * Chức năng: Lưu cấu hình mạng hiện tại vào NVS.
+ */
 void saveNetConfig() {
   prefs.begin("net", false);
   prefs.putString("ssid", cfgSsid);
   prefs.putString("pass", cfgPass);
   prefs.putString("hub",  cfgHub);
   prefs.end();
-  DBGLN(F(">> Da luu cau hinh mang vao NVS (giu sau khi tat nguon)"));
 }
 
+/**
+ * Chức năng: Khởi động dịch vụ cập nhật firmware qua WiFi và dừng động cơ khi bắt đầu nạp.
+ */
 void startOTA() {
   if (!wifiOK) return;
   ArduinoOTA.setHostname("esp32-car");
   // ArduinoOTA.setPassword("1234");   // mo neu muon dat mat khau OTA
-  ArduinoOTA.onStart([]() { stopMotors(); DBGLN(F("[OTA] Bat dau nap firmware...")); });
-  ArduinoOTA.onEnd([]()   { DBGLN(F("\n[OTA] Xong. Khoi dong lai.")); });
-  ArduinoOTA.onProgress([](unsigned p, unsigned t) { DBG("[OTA] %u%%\r", p * 100 / t); });
-  ArduinoOTA.onError([](ota_error_t e) { DBG("[OTA] Loi %u\n", e); });
+  ArduinoOTA.onStart([]() { stopMotors(); });
   ArduinoOTA.begin();
-  DBG(">> OTA san sang: pio run -e ota -t upload  (IP %s)\n", WiFi.localIP().toString().c_str());
 }
 
 bool hubStarted = false;          // da goi wsClient.begin() chua
 
+/**
+ * Chức năng: Khởi tạo WebSocket client và cơ chế tự kết nối lại với hub.
+ */
 void startHub() {
   if (!wifiOK) return;
   wsClient.begin(cfgHub.c_str(), HUB_PORT, "/");
   wsClient.onEvent(onWsEvent);
   wsClient.setReconnectInterval(3000);
   hubStarted = true;
-  DBG(">> Ket noi hub  ws://%s:%d\n", cfgHub.c_str(), HUB_PORT);
 }
 
 // ===================== Tu tim hub (UDP broadcast) =====================
@@ -1283,6 +879,9 @@ void startHub() {
 WiFiUDP disc;
 bool discReady = false;
 
+/**
+ * Chức năng: Tự tìm địa chỉ hub trong mạng LAN bằng UDP broadcast.
+ */
 void discoverHub() {
   if (!wifiOK || hubOK) return;                 // da noi duoc hub thi thoi
   if (!discReady) { disc.begin(DISC_PORT); discReady = true; }
@@ -1331,40 +930,33 @@ void discoverHub() {
 }
 
 // Bat toan bo dich vu mang khi WiFi da len. Goi 1 lan (duoc gac boi wifiOK).
+/**
+ * Chức năng: Khởi động các dịch vụ cần thiết sau khi WiFi kết nối thành công.
+ */
 void onWifiUp() {
   wifiOK = true;
-#if DEBUG_MODE
-  Serial.print(F(">> WiFi OK. Mo trinh duyet: http://"));
-  Serial.println(WiFi.localIP());
-  server.on("/", handleRoot);
-  server.on("/start", handleStart);
-  server.on("/stop", handleStop);
-  server.on("/status", handleStatus);
-  server.begin();
-#endif
   beep(80);
   startHub();
   startOTA();
 }
 
+/**
+ * Chức năng: Cấu hình ESP32 ở chế độ station và kết nối vào mạng WiFi đã lưu.
+ */
 void setupWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(cfgSsid.c_str(), cfgPass.c_str());
-  DBG("Ket noi WiFi '%s' ...\n", cfgSsid.c_str());
   unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000) { delay(250); DBG("."); }
-  DBGLN("");
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000) { delay(250); }
   if (WiFi.status() == WL_CONNECTED) onWifiUp();
-  else DBGLN(F(">> WiFi chua len (qua 10s) - loop se tu bat dich vu khi WiFi len"));
 }
 
 // ===================== Setup =====================
+/**
+ * Chức năng: Khởi tạo chân I/O, PWM, encoder, servo, gyro, NVS và kết nối mạng.
+ */
 void setup() {
-#if DEBUG_MODE
-  Serial.begin(115200);
-  delay(300);
-#endif
 
   // Motor pins
   pinMode(MA_IN1, OUTPUT); pinMode(MA_IN2, OUTPUT);
@@ -1399,25 +991,13 @@ void setup() {
   setupWiFi();         // ket noi WiFi + bat web server
   startHub();          // WebSocket client toi hub (chi khi da co WiFi)
   startOTA();          // bat nap firmware qua WiFi (OTA)
-
-  DBGLN(F("\n>> Firmware san sang (dieu phoi route tu hub)"));
-#if DEBUG_MODE
-  printMenu();
-#endif
 }
 
 // ===================== Loop =====================
-#if DEBUG_MODE
-unsigned long lastPrint = 0;
-#endif
+/**
+ * Chức năng: Vòng lặp chính: duy trì mạng, cập nhật odometry, chạy lộ trình và gửi telemetry.
+ */
 void loop() {
-  // Doc lenh tu Serial
-#if DEBUG_MODE
-  if (Serial.available()) {
-    String line = Serial.readStringUntil('\n');
-    handleCommand(line);
-  }
-#endif
 
   // WiFi co the len TRE hon timeout 10s luc boot (router cham), hoac tu noi lai sau khi rot.
   // Neu khong theo doi -> wifiOK ket false vinh vien: xe co IP, ping duoc, nhung
@@ -1430,9 +1010,6 @@ void loop() {
 
   // Web server + WebSocket client toi hub + OTA
   if (wifiOK) {
-#if DEBUG_MODE
-    server.handleClient();
-#endif
     wsClient.loop();
     ArduinoOTA.handle();
   }
@@ -1460,31 +1037,6 @@ void loop() {
   if (hubOK && millis() - lastTel >= 200) { lastTel = millis(); sendTelemetry(); }
 
   // Stream 8 mat do line moi 200ms
-#if DEBUG_MODE
-  static unsigned long lastLine = 0;
-  if (streamLine && millis() - lastLine > 200) {
-    lastLine = millis();
-    printLine();
-  }
-#endif
 
   // In dinh ky moi 500ms (chi o ban DEBUG)
-#if DEBUG_MODE
-  if (millis() - lastPrint > 500) {
-    lastPrint = millis();
-    if (lineFollow) {
-      Serial.printf("[line] err=%.2f %s | x=%.0f y=%.0f th=%.0fdeg\n",
-                    lineError, lineLost ? "(MAT LINE)" : "",
-                    poseX, poseY, poseTheta * 180.0f / PI);
-    } else {
-      static long lastL = 0, lastR = 0;
-      if (encL != lastL || encR != lastR) {
-        Serial.printf("[enc] L=%ld (%.1fmm)  R=%ld (%.1fmm)\n",
-                      encL, pulsesToMM(encL), encR, pulsesToMM(encR));
-        lastL = encL; lastR = encR;
-      }
-    }
-  }
-#endif
 }
-

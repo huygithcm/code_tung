@@ -33,6 +33,29 @@ Firmware xe dò line dùng **ESP32** + L298N (2 motor DC có encoder), thanh 8 c
 
 ---
 
+## Debug và Release
+
+Hai môi trường dùng chung thuật toán điều khiển để tránh lệch hành vi, nhưng có entry point và phạm vi tính năng khác nhau:
+
+| | Debug | Release |
+|---|---|---|
+| File được biên dịch | `src/main.cpp` | `src/main_release.cpp` |
+| Mục đích | test, hiệu chuẩn, chẩn đoán | chạy xe thực tế |
+| Serial/menu test | có | loại khỏi firmware |
+| Web local cổng 80 | có | loại khỏi firmware |
+| Lệnh tune/test từ hub | có | loại khỏi firmware |
+| Route, PID, encoder/gyro, WebSocket, OTA, NVS | có | có |
+| RAM (build hiện tại) | 52.568 byte | 51.736 byte |
+| Flash (build hiện tại) | 1.069.149 byte | 991.057 byte |
+
+Bản release giảm 78.092 byte flash và 832 byte RAM so với debug. `main_release.cpp` chỉ là entry point tinh gọn; phần lõi vẫn include từ `main.cpp`, còn mã debug được loại bằng điều kiện biên dịch nên không bị nhân đôi mã nguồn.
+
+```powershell
+pio run -e debug
+pio run -e release
+.\flash.ps1 -Env release -NoMonitor
+```
+
 ## 🔧 Build & Flash
 
 ```powershell
