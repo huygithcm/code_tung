@@ -191,7 +191,15 @@ float  centerStartMM = 0;         // moc quang duong khi bat dau bo canh tam
 // de dua cam bien len nhanh moi. Khong thay trong REACQUIRE_MAX -> dung an toan.
 int    REACQUIRE_SPEED  = 130;    // toc do bo (cham) khi canh tam / tim line
 int    REACQUIRE_MAX_MM = 220;    // bo toi da bao nhieu mm de tim; qua -> dung an toan (noi rong de bot MAT LINE o nhanh)
-float  reacqStartMM = 0;
+// Sau khi rẽ, xe chỉ xoay dò và phải xác nhận line ổn định trước khi chạy thẳng.
+int    REACQUIRE_TURN_PWM = 135;
+float  REACQUIRE_SCAN_DEG = 16.0;
+int    REACQUIRE_STABLE_N = 3;
+unsigned long REACQUIRE_TIMEOUT_MS = 2200;
+float  reacqCenterTheta = 0;
+int    reacqScanDir = 1;
+int    reacqStableCount = 0;
+unsigned long reacqStartMs = 0;
 
 // ===================== Encoder ISR (quadrature) =====================
 /**
@@ -458,6 +466,43 @@ void lineFollowStep() {
   lineDrivePID();
 }
 
+/**
+ * Chức năng: Khởi tạo pha xoay dò line mới sau khi hoàn tất một cú rẽ.
+ */
+void beginLineReacquire(int preferredDir) {
+  stopMotors();
+  reacqCenterTheta = poseTheta;
+  reacqScanDir = preferredDir >= 0 ? 1 : -1;
+  reacqStableCount = 0;
+  reacqStartMs = millis();
+}
+
+/**
+ * Chức năng: Xoay dò chậm và chỉ xác nhận line mới khi tín hiệu ổn định ba mẫu liên tiếp.
+ */
+int reacquireLineStep() {
+  bool found = computeLineError();
+  bool candidate = found && lineCount > 0 && lineCount < INTERSECT_N;
+  if (candidate) {
+    stopMotors();
+    if (++reacqStableCount >= REACQUIRE_STABLE_N) return 1;
+    return 0;
+  }
+  reacqStableCount = 0;
+
+  if (millis() - reacqStartMs >= REACQUIRE_TIMEOUT_MS) {
+    stopMotors();
+    return -1;
+  }
+
+  float deltaDeg = (poseTheta - reacqCenterTheta) * 180.0f / PI;
+  if (deltaDeg >= REACQUIRE_SCAN_DEG) reacqScanDir = -1;
+  else if (deltaDeg <= -REACQUIRE_SCAN_DEG) reacqScanDir = 1;
+  driveA(reacqScanDir * REACQUIRE_TURN_PWM);
+  driveB(-reacqScanDir * REACQUIRE_TURN_PWM);
+  return 0;
+}
+
 // ===================== Re theo GOC (gyro feedback) =====================
 // Quay tai cho mot goc tuong doi (deg). Duong = quay trai (CCW), am = phai.
 // CACH LAM (khong phu thuoc pin): chay PWM co dinh, doc GOC THAT (poseTheta, hop nhat gyro)
@@ -697,22 +742,13 @@ void stepExec() {
     // "khong thay line" ngay tu buoc dau tien (da xay ra thuc te).
     if (stepPhase == 0) {
       turnRelative(180);
-      reacqStartMM = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f;
+      beginLineReacquire(1);
       stepPhase = 3;
       return;
     }
-    // stepPhase == 3: bo CAN CHINH lai line. Dung nguong >=2 mat (khong phai >=1 nhu
-    // reacquire thuong): day la LAN KIEM TRA DAU TIEN ngay sau khi dung yen (0mm di
-    // chuyen) - 1 mat le co the bao DUONG TINH GIA do nhieu/mat hong.
-    computeLineError();
-    if (lineCount >= 2 && !lineLost) { finishStep(true, "home"); return; }  // da can lai line -> xong
-    float d = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f - reacqStartMM;
-    if (d > REACQUIRE_MAX_MM) {   // bo qua xa van khong thay -> thoi, cu ket thuc (tranh xe ket mai)
-      finishStep(true, "home: khong can lai duoc line sau khi quay (kiem tra vi tri xe)");
-      return;
-    }
-    int spd = max(REACQUIRE_SPEED, TURN_OPEN_PWM);
-    driveA(spd); driveB(spd);
+    int reacq = reacquireLineStep();
+    if (reacq > 0) { finishStep(true, "home"); return; }
+    if (reacq < 0) finishStep(false, "HOME: khong thay line moi sau khi re - da dung an toan");
     return;
   }
 
@@ -724,15 +760,19 @@ void stepExec() {
     if (deg != 0) turnRelative(deg);          // rE tai cho (co dinh, blocking)
     segStartX = poseX; segStartY = poseY; leftStart = false;
     lastError = 0; errIntegral = 0;
-    reacqStartMM = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f;
-    stepPhase = 3;                             // -> BO TIM line moi (khong xoay do)
+    if (deg != 0) {
+      beginLineReacquire(deg >= 0 ? 1 : -1);
+      stepPhase = 3;
+    } else {
+      stepPhase = 1;
+    }
     return;
   }
 
-  // --- Pha 3: sau khi re, BO THANG CHAM de dua cam bien len nhanh moi ---
+  // --- Pha 3: sau khi rẽ chỉ xoay dò; chưa thấy line thì tuyệt đối không chạy thẳng ---
   if (stepPhase == 3) {
-    computeLineError();                        // cap nhat lineCount/lineLost
-    if (lineCount >= 1 && !lineLost) {         // da bat duoc line moi
+    int reacq = reacquireLineStep();
+    if (reacq > 0) {
       // KHONG reset segStart o day: giu moc tu pha 0 (= vi tri NODE, truoc khi bo reacquire)
       // de trav trong pha 1 do dung khoang cach truc banh TU NODE -> khop voi curDist
       // (node->node). Reset o day se bo qua doan reacquire -> trav thieu -> gate sai.
@@ -741,16 +781,10 @@ void stepExec() {
       stepPhase = 1;
       return;
     }
-    float d = (pulsesToMM(encL) + pulsesToMM(encR)) * 0.5f - reacqStartMM;
-    if (d > REACQUIRE_MAX_MM) {                // bo qua xa van khong thay -> DUNG AN TOAN
-      finishStep(false, "MAT LINE sau khi re (bo " + String((int)d) + "mm khong thay). Kiem tra goc re / CENTER_OFFSET.");
+    if (reacq < 0) {
+      finishStep(false, "MAT LINE sau khi re: da xoay do nhung khong thay line moi - dung an toan");
       return;
     }
-    // Dang dung yen (vua RE xong, van toc = 0) truoc khi bo: REACQUIRE_SPEED (130) co the
-    // duoi nguong ma sat tinh khi khoi dong tu dung im hoan toan -> xe "e" tai cho, encoder
-    // khong tang. Dung TURN_OPEN_PWM lam san toi thieu de dam bao THUC SU lan banh.
-    int spd = max(REACQUIRE_SPEED, TURN_OPEN_PWM);
-    driveA(spd); driveB(spd);                  // bo thang, KHONG xoay
     return;
   }
 
