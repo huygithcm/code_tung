@@ -40,6 +40,7 @@ function liOf(e) { const li = document.createElement('li'); li.innerHTML = `<spa
 
 // ---------- Quét QR ----------
 let qr = null;
+let knownNodes = new Set();
 document.getElementById('qrStart').onclick = async () => {
   if (qr) return;
   qr = new Html5Qrcode('reader');
@@ -63,18 +64,21 @@ function onScan(text) {
 }
 function renderQrConfirm(text) {
   const box = document.getElementById('qrResult');
+  const target = normalizeQrToNode(text);
   const safe = String(text).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const targetLine = target ? `<br>Điểm giao: <b class="k">${target}</b>` : '';
   box.innerHTML =
-    `📷 QR: <b>${safe}</b> — giao hàng theo mã này?` +
+    `📷 QR: <b>${safe}</b>${targetLine}<br>Start giao hàng?` +
     `<div class="row" style="margin-top:10px">` +
-    `<button class="btn b-start big" onclick="confirmQR()">✅ Có, giao</button>` +
+    `<button class="btn b-start big" onclick="confirmQR()">Yes - start giao</button>` +
     `<button class="btn b-stop big" onclick="cancelQR()">✖ Huỷ</button>` +
     `</div>`;
 }
 function confirmQR() {
   if (pendingQR === null) return;
-  send({ cmd: 'qr', value: pendingQR });
-  document.getElementById('qrResult').textContent = '✅ Đã gửi lệnh giao theo QR: ' + pendingQR;
+  const value = normalizeQrToNode(pendingQR) || pendingQR;
+  send({ cmd: 'qr', value });
+  document.getElementById('qrResult').textContent = '✅ Đã gửi lệnh start giao hàng: ' + value;
   pendingQR = null;
 }
 function cancelQR() {
@@ -82,5 +86,32 @@ function cancelQR() {
   lastScan = 0;                               // cho phép quét lại ngay
   document.getElementById('qrResult').textContent = 'Đã huỷ. Hướng camera vào mã QR để quét lại.';
 }
+
+function normalizeQrToNode(value) {
+  const raw = String(value || '').trim();
+  if (knownNodes.has(raw)) return raw;
+  try {
+    const url = new URL(raw, location.href);
+    const node = (url.searchParams.get('node') || url.searchParams.get('qr') || '').trim();
+    if (knownNodes.has(node)) return node;
+  } catch (_) {}
+  return null;
+}
+
+function loadFixedNodeFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const node = (params.get('node') || params.get('qr') || '').trim();
+  if (!node) return;
+  pendingQR = node;
+  renderQrConfirm(node);
+}
+
+fetch('/api/points')
+  .then(r => r.json())
+  .then(nodes => {
+    knownNodes = new Set(nodes || []);
+    loadFixedNodeFromUrl();
+  })
+  .catch(loadFixedNodeFromUrl);
 
 connect();

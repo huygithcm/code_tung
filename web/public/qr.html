@@ -28,6 +28,12 @@
   </section>
 
   <section class="panel">
+    <h2>📍 QR node cố định</h2>
+    <p class="hint">Mỗi mã gắn cứng với một node C1..C9. Quét bằng trang <a href="/scan.html">scan</a>, bấm Yes để start giao hàng.</p>
+    <div id="fixedNodeCards" class="qr-grid"></div>
+  </section>
+
+  <section class="panel">
     <h2>✏️ Tạo QR tuỳ ý</h2>
     <p class="hint">Nhập nội dung bất kỳ (vd <code>A</code>, <code>SP-001</code>, hoặc <code>C5</code>) rồi quét thử.</p>
     <div class="row">
@@ -66,6 +72,15 @@ fetch('/api/goods').then(r => r.json()).then(goods => {
   const box = document.getElementById('cards');
   if (!goods.length) { box.innerHTML = '<p class="hint">Chưa có hàng nào.</p>'; return; }
   goods.forEach(g => makeCard(box, g.code, `${g.name || ''} → ${g.node}`));
+});
+
+fetch('/api/points').then(r => r.json()).then(nodes => {
+  const box = document.getElementById('fixedNodeCards');
+  box.innerHTML = '';
+  nodes.forEach(node => makeCard(box, node, `Node cố định → ${node}`));
+}).catch(() => {
+  document.getElementById('fixedNodeCards').innerHTML =
+    '<p class="hint">Không lấy được danh sách node.</p>';
 });
 
 // QR truy cập trang (URL LAN của server) — quét bằng điện thoại để mở

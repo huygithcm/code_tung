@@ -6,14 +6,18 @@
 module.exports = {
   PORT: 3000,
 
-  // Ánh xạ NỘI DUNG MÃ QR → điểm giao trên map (C1..C9 = 9 ô, trái→phải, trên→dưới).
-  // QR có thể là 'A'/'B' (loại hàng) hoặc mã sản phẩm → tra ở đây.
+  // Ánh xạ NỘI DUNG MÃ QR → điểm giao trên map.
+  // Luồng cố định: mỗi QR C1..C9 gắn cứng với đúng node C1..C9.
   QR_MAP: {
-    A: 'C1',      // hàng loại A → giao ô C1 (trên-trái)
-    B: 'C3',      // hàng loại B → giao ô C3 (trên-phải)
-    C: 'C5',      // (dự phòng) → giao ô C5 (giữa)
-    'SP-001': 'C7',
-    'SP-002': 'C9',
+    C1: 'C1',
+    C2: 'C2',
+    C3: 'C3',
+    C4: 'C4',
+    C5: 'C5',
+    C6: 'C6',
+    C7: 'C7',
+    C8: 'C8',
+    C9: 'C9',
   },
 
   // Góc servo (PLAN mục 3) — gửi tham khảo xuống xe nếu cần.
